@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Factorio Idle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div id="app">
+  <!-- radio inputs drive the CSS-only tab switcher -->
+  <input type="radio" name="tab" id="tab-factory" checked>
+  <input type="radio" name="tab" id="tab-research">
+  <input type="radio" name="tab" id="tab-stats">
+
+  <header>
+    <h1>⚙ FACTORIO IDLE</h1>
+    <span class="badge">ROCKETS&nbsp;<b id="hdr-launches">0</b></span>
+    <span class="badge">BONUS&nbsp;<b id="hdr-bonus">×1.0</b></span>
+    <div class="spacer"></div>
+    <span class="badge" id="hdr-power-badge" hidden>PWR&nbsp;<b id="hdr-power">0 / 0 MW</b></span>
+    <button onclick="UI.confirmHardReset()">RESET</button>
+  </header>
+
+  <nav class="tabs">
+    <label for="tab-factory">FACTORY</label>
+    <label for="tab-research">RESEARCH</label>
+    <label for="tab-stats">STATISTICS</label>
+  </nav>
+
+  <main>
+    <!-- ===================== FACTORY ===================== -->
+    <section class="panel" id="panel-factory">
+      <div class="col-resources">
+        <div class="section-title">⛏ MINE BY HAND</div>
+        <div class="mine-btns" id="mine-btns"></div>
+        <div class="section-title">📦 RESOURCES</div>
+        <div id="res-list"></div>
+      </div>
+
+      <div class="col-buildings">
+        <div class="section-title">🏭 FACTORY MAP <span id="map-hint" class="map-hint">— pick a building, click to place · drag to pan · right-click to remove</span></div>
+        <div id="bld-palette" class="bld-palette"></div>
+        <div id="map-wrap" class="map-wrap"><canvas id="map-canvas"></canvas></div>
+        <div id="entity-inspector" class="entity-inspector" hidden></div>
+      </div>
+
+      <div class="col-energy" id="col-energy" hidden>
+        <div class="section-title">⚡ ENERGY</div>
+        <div class="energy-meter">
+          <div class="energy-bar"><span id="energy-fill"></span></div>
+          <div class="energy-num">
+            <span id="energy-prod" class="ok">0</span> /
+            <span id="energy-cons">0</span> MW
+          </div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:4px;" id="energy-status">Nominal</div>
+        </div>
+        <div id="power-list"></div>
+      </div>
+    </section>
+
+    <!-- ===================== RESEARCH ===================== -->
+    <section class="panel" id="panel-research">
+      <div class="section-title">🔬 TECHNOLOGY TREE — one research at a time</div>
+      <div class="tech-grid" id="tech-grid"></div>
+    </section>
+
+    <!-- ===================== STATISTICS ===================== -->
+    <section class="panel" id="panel-stats">
+      <div class="section-title">📈 PRODUCTION — last 5 minutes</div>
+      <div id="spark-list"></div>
+      <div class="section-title" style="margin-top:18px;">📊 TOTALS</div>
+      <table class="stat-table" id="stat-table"></table>
+    </section>
+  </main>
+</div>
+
+<!-- save-detected modal -->
+<div class="overlay hidden" id="load-modal">
+  <div class="modal">
+    <h2>SAVE DETECTED</h2>
+    <p>A previous factory was found in your browser.<br>Continue where you left off, or start fresh?</p>
+    <div class="btns">
+      <button class="accent" onclick="UI.continueGame()">CONTINUE</button>
+      <button onclick="UI.newGameConfirm()">NEW GAME</button>
+    </div>
+  </div>
+</div>
+
+<!-- offline-progress modal -->
+<div class="overlay hidden" id="offline-modal">
+  <div class="modal">
+    <h2>WELCOME BACK</h2>
+    <p id="offline-text"></p>
+    <div class="btns"><button class="accent" onclick="UI.closeOffline()">COLLECT</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
