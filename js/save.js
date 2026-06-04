@@ -10,7 +10,8 @@ export const Save = {
     const s = GameState.state;
     s.lastTick = Date.now();
     s.lastSave = Date.now();
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(s)); } catch (e) { /* quota / private mode */ }
+    const { stats, ...persist } = s;     // graph buffers are session-only, never persisted
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(persist)); } catch (e) { /* quota / private mode */ }
   },
 
   load() {

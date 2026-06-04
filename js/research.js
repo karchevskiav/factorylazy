@@ -3,6 +3,7 @@ import { GameState } from './gameState.js';
 import { TECH }      from './data/tech.js';
 import { UI }        from './ui.js';
 import { Production } from './production.js';
+import { I18N }      from './i18n.js';
 
 export const Research = {
   // advance the active research over `dt` seconds
@@ -30,12 +31,12 @@ export const Research = {
 
   start(key) {
     const s = GameState.state;
-    if (s.research.current) return UI.toast('Finish current research first');
+    if (s.research.current) return UI.toast(I18N.t('toast_finish_research'));
     if (s.research.done.includes(key)) return;
-    for (const r of TECH[key].req) if (!s.research.done.includes(r)) return UI.toast('Requirements not met');
+    for (const r of TECH[key].req) if (!s.research.done.includes(r)) return UI.toast(I18N.t('toast_req_not_met'));
     s.research.current = key;
     s.research.progress = 0;
-    UI.toast('Researching: ' + TECH[key].name);
+    UI.toast(I18N.t('toast_researching', I18N.name('tech_' + key, TECH[key].name)));
     UI.renderResearch();
   },
 
@@ -47,7 +48,7 @@ export const Research = {
     const e = TECH[key].effect || {};
     if (e.unlockModules) s.modulesUnlocked = true;
     if (e.unlockRocket)  s.rocketUnlocked  = true;
-    UI.toast('✔ Researched ' + TECH[key].name);
+    UI.toast(I18N.t('toast_researched', I18N.name('tech_' + key, TECH[key].name)));
     Production.order = null;   // recipe/tier set may have changed
     UI.renderAll();
   },

@@ -5,6 +5,7 @@ import { POWER }     from './data/power.js';
 import { TECH }      from './data/tech.js';
 import { MODULES }   from './data/modules.js';
 import { MapGen }    from './map.js';
+import { STAT_WINDOWS } from './config.js';
 
 export const GameState = {
   state: null,
@@ -25,9 +26,17 @@ export const GameState = {
       lastTick: Date.now(),
       lastSave: Date.now(),
       totals: { produced: {}, consumed: {} },
-      history: {},     // resKey -> array of net/sec samples
+      // per-window production samples. buf: winId -> resKey -> avg net/sec ring
+      // buffer; acc/ticks accumulate the current bucket. Not persisted (rebuilt
+      // each session). Resources that never flow get no buffer.
+      stats: {
+        win: STAT_WINDOWS[0].id,
+        buf:   Object.fromEntries(STAT_WINDOWS.map(w => [w.id, {}])),
+        acc:   Object.fromEntries(STAT_WINDOWS.map(w => [w.id, {}])),
+        ticks: Object.fromEntries(STAT_WINDOWS.map(w => [w.id, 0])),
+      },
     };
-    for (const k in RESOURCES) { s.resources[k] = 0; s.history[k] = []; }
+    for (const k in RESOURCES) { s.resources[k] = 0; }
     // a small starting hand so the first drill + furnace can be built
     s.resources.ironPlate = 20;
     s.resources.stone = 10;

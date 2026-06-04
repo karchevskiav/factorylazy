@@ -13,7 +13,7 @@ export const BUILDINGS = {
     recipes:['water'],
   },
   pumpjack: {
-    name:'Pumpjack', icon:'🛢', img:'assets/icons/pumpjack.png', color:'#3a3a3a', cat:'oil', place:'land', w:2, h:2,
+    name:'Pumpjack', icon:'🛢', img:'assets/icons/pumpjack.png', color:'#3a3a3a', cat:'oil', place:'oil', w:2, h:2,
     speed:1, energy:1, slots:0, baseCost:{ironGearWheel:10,steelPlate:5,electronicCircuit:5,pipe:10}, costMul:1.2, unlock:'oilProcessing',
     recipes:['crudeOil'],
   },

@@ -7,6 +7,7 @@ import { BUILDINGS } from './data/buildings.js';
 import { POWER }     from './data/power.js';
 import { DECOR }     from './data/decor.js';
 import { MapGen }    from './map.js';
+import { I18N }      from './i18n.js';
 
 const TILE = 42;
 const GRASS = ['#3a4a2e', '#3f5031', '#445635'];
@@ -19,6 +20,9 @@ export const MapView = {
   hover: { x: -99, y: -99, inside: false },
   drag: null,              // {startX, startCam} while panning
   imgs: {},                // path -> HTMLImageElement
+  mining: false,           // hold-to-mine ore by hand
+  mineRAF: null, mineLastTs: 0, mineAccum: 0,
+  MINE_RATE: 5,            // ore mined per second by hand
 
   init() {
     this.canvas = document.getElementById('map-canvas');
@@ -67,14 +71,19 @@ export const MapView = {
   bind() {
     const c = this.canvas;
     c.addEventListener('mousedown', (e) => {
-      if (e.button === 1 || (e.button === 0 && this.place === null && !this.entityAt(this.toTile(e).x, this.toTile(e).y))) {
+      const t = this.toTile(e); const ent = this.entityAt(t.x, t.y);
+      // left-click on bare ore (no entity, not placing) ⇒ hand-mine while held (not oil)
+      if (e.button === 0 && this.place === null && !ent && this.handMineable(t.x, t.y)) {
+        this.startMining(); return;
+      }
+      if (e.button === 1 || (e.button === 0 && this.place === null && !ent)) {
         this.drag = { startX: e.clientX, startCam: this.camPx };
       }
     });
     window.addEventListener('mousemove', (e) => {
       if (this.drag) { this.camPx = Math.max(0, this.drag.startCam - (e.clientX - this.drag.startX)); this.render(); return; }
     });
-    window.addEventListener('mouseup', () => { this.drag = null; });
+    window.addEventListener('mouseup', () => { this.drag = null; this.stopMining(); });
     c.addEventListener('mousemove', (e) => {
       const t = this.toTile(e); this.hover = { x: t.x, y: t.y, inside: true }; this.render();
     });
@@ -111,18 +120,35 @@ export const MapView = {
   /* ---------- placement / selection ---------- */
   setPlace(type) { this.place = type; this.selected = null; window.UI.hideInspector(); this.render(); },
 
-  oreUnder(x, y) {           // require the whole 2×2 footprint on one ore type
-    const o = MapGen.oreAt(GameState.state.map, x, y);
-    if (!o) return null;
-    for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 2; dy++)
-      if (MapGen.oreAt(GameState.state.map, x + dx, y + dy) !== o) return null;
-    return o;
+  oreUnder(x, y) {           // any drill-mineable ore under the 2×2 footprint (not oil)
+    for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 2; dy++) {
+      const o = MapGen.oreAt(GameState.state.map, x + dx, y + dy);
+      if (o && o !== 'crudeOil') return o;
+    }
+    return null;
+  },
+
+  oresUnder(x, y) {          // every distinct drill-mineable ore under the footprint
+    const out = [];
+    for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 2; dy++) {
+      const o = MapGen.oreAt(GameState.state.map, x + dx, y + dy);
+      if (o && o !== 'crudeOil' && !out.includes(o)) out.push(o);
+    }
+    return out;
+  },
+
+  oilUnder(x, y) {           // true if any crude-oil tile is under the 2×2 footprint
+    for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 2; dy++) {
+      if (MapGen.oreAt(GameState.state.map, x + dx, y + dy) === 'crudeOil') return true;
+    }
+    return false;
   },
 
   valid(type, x, y) {
     if (!GameState.free(x, y, 2, 2)) return false;
     const def = GameState.def(type);
     if (def.place === 'ore') return !!this.oreUnder(x, y);
+    if (def.place === 'oil') return this.oilUnder(x, y);
     return true;
   },
 
@@ -134,11 +160,12 @@ export const MapView = {
     const type = this.place, def = GameState.def(type);
     if (!def) return;
     if ((BUILDINGS[type] && !GameState.isBuildingUnlocked(type)) || (POWER[type] && !GameState.isPowerUnlocked(type)))
-      return window.UI.toast('Locked — research required');
+      return window.UI.toast(I18N.t('toast_locked'));
     if (!this.valid(type, x, y))
-      return window.UI.toast(def.place === 'ore' ? 'Drills must be placed on a matching ore patch' : 'Blocked — tiles occupied');
+      return window.UI.toast(I18N.t(def.place === 'ore' ? 'toast_drill_ore'
+        : def.place === 'oil' ? 'toast_pump_oil' : 'toast_blocked'));
     const cost = this.costOf(type, GameState.placedOf(type));
-    if (!window.UI.canAfford(cost)) return window.UI.toast('Not enough resources');
+    if (!window.UI.canAfford(cost)) return window.UI.toast(I18N.t('toast_no_res'));
     window.UI.pay(cost);
 
     let recipe = null;
@@ -163,6 +190,47 @@ export const MapView = {
     window.UI.renderDynamic();
   },
 
+  /* ---------- hand mining (hold to mine ore) ---------- */
+  startMining() {
+    if (this.mining) return;
+    this.mining = true;
+    this.mineLastTs = performance.now();
+    this.mineAccum = 0;
+    this.mineOre(this.hover.x, this.hover.y, 1);      // instant feedback on the initial click
+    const loop = (ts) => {
+      if (!this.mining) return;
+      const dt = Math.min(0.25, (ts - this.mineLastTs) / 1000);
+      this.mineLastTs = ts;
+      if (this.hover.inside) {
+        this.mineAccum += dt * this.MINE_RATE;
+        const whole = Math.floor(this.mineAccum);
+        if (whole >= 1) { this.mineAccum -= whole; this.mineOre(this.hover.x, this.hover.y, whole); }
+      }
+      this.render();
+      this.mineRAF = requestAnimationFrame(loop);
+    };
+    this.mineRAF = requestAnimationFrame(loop);
+  },
+  handMineable(x, y) {       // ore you can dig by hand — anything but crude oil
+    const o = MapGen.oreAt(GameState.state.map, x, y);
+    return !!o && o !== 'crudeOil';
+  },
+  mineOre(x, y, n) {
+    const ore = MapGen.oreAt(GameState.state.map, x, y);
+    if (!ore || ore === 'crudeOil') return;
+    const s = GameState.state;
+    s.resources[ore] = (s.resources[ore] || 0) + n;
+    s.totals.produced[ore] = (s.totals.produced[ore] || 0) + n;
+    window.UI.renderDynamic();
+  },
+  stopMining() {
+    if (!this.mining) return;
+    this.mining = false;
+    if (this.mineRAF) cancelAnimationFrame(this.mineRAF);
+    this.mineRAF = null;
+    this.render();
+  },
+
   /* ---------- rendering ---------- */
   sprite(path, sx, sy, size) {
     const im = this.imgs[path];
@@ -176,21 +244,14 @@ export const MapView = {
     const W = this.canvas.width, H = this.canvas.height;
     const c0 = Math.floor(this.camPx / TILE), c1 = c0 + Math.ceil(W / TILE) + 1;
 
-    // terrain: real grass texture, with ore-on-ground rock sprites on ore tiles
+    // terrain pass: grass everywhere, sparse decoratives on plain (non-ore) grass
     for (let x = c0; x < c1; x++) {
       for (let y = 0; y < s.map.height; y++) {
         const sx = x * TILE - this.camPx, sy = y * TILE;
         if (!this.drawn(this.terr['grass-' + MapGen.grassShade(s.map, x, y)], sx, sy, TILE)) {
           ctx.fillStyle = GRASS[MapGen.grassShade(s.map, x, y)]; ctx.fillRect(sx, sy, TILE, TILE);
         }
-        const ore = MapGen.oreAt(s.map, x, y);
-        if (ore) {
-          const oi = this.terr['ore-' + ore + '-' + this.oreVariant(x, y)];
-          if (!this.drawn(oi, sx, sy, TILE)) {
-            ctx.fillStyle = RESOURCES[ore].color; ctx.globalAlpha = 0.7; ctx.fillRect(sx, sy, TILE, TILE);
-            ctx.globalAlpha = 1; this.sprite(RESOURCES[ore].img, sx + 3, sy + 3, TILE - 6);
-          }
-        } else if (DECOR.length) {
+        if (!MapGen.oreAt(s.map, x, y) && DECOR.length) {
           // sparse decoratives on plain grass (HR sprites: 128px ≈ one tile)
           const hh = this.decorHash(x, y);
           if (hh % 100 < 16) {
@@ -202,6 +263,21 @@ export const MapView = {
               ctx.drawImage(im, sx + ox, sy + oy, w, h);
             }
           }
+        }
+      }
+    }
+
+    // ore pass (after all grass so the slight overscan can feather onto neighbours)
+    const OVER = 5;                       // px the ore sprite bleeds past its tile on each side
+    for (let x = c0; x < c1; x++) {
+      for (let y = 0; y < s.map.height; y++) {
+        const ore = MapGen.oreAt(s.map, x, y);
+        if (!ore) continue;
+        const sx = x * TILE - this.camPx, sy = y * TILE;
+        const oi = this.terr['ore-' + ore + '-' + this.oreVariant(x, y)];
+        if (!this.drawn(oi, sx - OVER, sy - OVER, TILE + 2 * OVER)) {
+          ctx.fillStyle = RESOURCES[ore].color; ctx.globalAlpha = 0.7; ctx.fillRect(sx, sy, TILE, TILE);
+          ctx.globalAlpha = 1; this.sprite(RESOURCES[ore].img, sx + 3, sy + 3, TILE - 6);
         }
       }
     }
@@ -239,6 +315,20 @@ export const MapView = {
       ctx.globalAlpha = 0.55; this.sprite(d.img, sx + 2, sy + 2, sz - 4); ctx.globalAlpha = 1;
       ctx.strokeStyle = ok ? '#5fe06a' : '#e05a5a'; ctx.lineWidth = 2;
       ctx.strokeRect(sx + 1, sy + 1, sz - 2, sz - 2); ctx.lineWidth = 1;
+    }
+
+    // hand-mining: a swinging pickaxe on the hovered ore tile
+    if (this.mining && this.hover.inside) {
+      const sx = this.hover.x * TILE - this.camPx, sy = this.hover.y * TILE;
+      ctx.strokeStyle = '#ffcf3f'; ctx.lineWidth = 2;
+      ctx.strokeRect(sx + 1, sy + 1, TILE - 2, TILE - 2); ctx.lineWidth = 1;
+      const ang = Math.sin(performance.now() / 80) * 0.6 - 0.3;
+      ctx.save();
+      ctx.translate(sx + TILE / 2, sy + TILE / 2);
+      ctx.rotate(ang);
+      ctx.font = '26px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('⛏', 0, -2);
+      ctx.restore();
     }
   },
 
