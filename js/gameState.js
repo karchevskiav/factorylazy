@@ -20,6 +20,7 @@ export const GameState = {
       resources: {},
       map: MapGen.generate(Date.now()),
       entities: [],    // [{id, type, x, y, recipe, modules:[]}] — buildings placed on the map
+      cleared: {},     // "x,y" -> 1 for obstacles (trees/rocks) the player has removed
       research: { done: [], current: null, progress: 0 },
       modulesUnlocked: false,
       rocketUnlocked: false,
@@ -48,9 +49,19 @@ export const GameState = {
   def(type)  { return BUILDINGS[type] || POWER[type]; },        // unified building/generator lookup
   placedOf(type) { return this.state.entities.filter(e => e.type === type).length; },
 
-  // is the footprint at (x,y) free of other entities? (2×2 default)
+  // an uncleared obstacle (tree/rock) at this tile, or null
+  obstacleAt(x, y) {
+    if (this.state.cleared[x + ',' + y]) return null;
+    return MapGen.obstacleAt(this.state.map, x, y);
+  },
+
+  // is the footprint at (x,y) free of other entities AND obstacles? (2×2 default)
   free(x, y, w = 2, h = 2, ignore = null) {
     if (y < 0 || y + h > this.state.map.height || x < 0) return false;
+    for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) {
+      if (this.obstacleAt(x + dx, y + dy)) return false;            // can't build on trees/rocks
+      if (MapGen.waterAt(this.state.map, x + dx, y + dy)) return false;  // can't build on water
+    }
     for (const e of this.state.entities) {
       if (e === ignore) continue;
       const d = this.def(e.type); const ew = d.w || 2, eh = d.h || 2;

@@ -37,6 +37,7 @@ export const Save = {
       recipe: e.recipe, modules: e.modules || [], _progress: 0,
     }));
     GameState.nextId = (s.entities.reduce((m, e) => Math.max(m, e.id || 0), 0) || 0) + 1;
+    s.cleared         = loaded.cleared || {};      // obstacles the player already removed
     s.research        = loaded.research || s.research;
     if (!s.research.done) s.research.done = [];
     s.launches        = loaded.launches || 0;

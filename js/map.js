@@ -73,8 +73,10 @@ export const MapGen = {
 
   oreAt(map, x, y) {
     if (!map || x < 0 || y < 0 || y >= MAP_HEIGHT) return null;
-    if (x < this.START_W) return map.ores[`${x},${y}`] || null;   // hand-authored start
-    return this.procOre(map, x, y);
+    const ore = x < this.START_W ? (map.ores[`${x},${y}`] || null)  // hand-authored start
+                                  : this.procOre(map, x, y);
+    if (ore) { const t = this.terrainType(map, x, y); if (t === 'sand' || t === 'water') return null; } // no resources on beaches or water
+    return ore;
   },
 
   // procedural ore for the open world: smooth value-noise thresholded so that,
@@ -129,9 +131,67 @@ export const MapGen = {
     return a + (b - a) * sy;
   },
 
+  // deterministic water (lakes) from coarse value-noise. Ore wins over water, and
+  // the first few columns stay dry so spawn is always buildable. You can't build
+  // on water (see GameState.free) — it renders as a textured patch like ore.
+  // ---- elevation & terrain types ----
+  // A continuous height field (fBm: several value-noise octaves) drives terrain by
+  // band: below WATER_LVL is lake, then a SAND beach, then GRASS, then dry HIGHLAND.
+  // Because bands follow the smooth contour, beaches aren't a square ring and new
+  // terrain types are just new thresholds. The spawn region is nudged up to stay dry.
+  WATER_LVL: 0.34, SAND_LVL: 0.46, DRYGRASS_LVL: 0.62, HIGHLAND_LVL: 0.72,
+  elevation(map, x, y) {
+    const s = map.seed;
+    let e = 0.55 * this.vnoise(s ^ 0x1a1f, x, y, 16)
+          + 0.30 * this.vnoise(s ^ 0x2b2e, x, y, 7)
+          + 0.15 * this.vnoise(s ^ 0x3c3d, x, y, 3.3);
+    if (x < this.START_W) e += (this.START_W - x) / this.START_W * 0.12;   // bias spawn to land
+    return e;
+  },
+  // a coarse biome field: some mid-elevation regions are orange desert instead of grass
+  isDesert(map, x, y) { return this.vnoise(map.seed ^ 0x5eed0d, x, y, 26) > 0.62; },
+  terrainType(map, x, y) {
+    if (!map || y < 0 || y >= map.height) return 'grass';
+    const e = this.elevation(map, x, y);
+    // bands: water → sand beach → grass → drygrass (intermediate) → highland
+    let t = e < this.WATER_LVL ? 'water' : e < this.SAND_LVL ? 'sand'
+          : e > this.HIGHLAND_LVL ? 'highland' : e > this.DRYGRASS_LVL ? 'drygrass' : 'grass';
+    if (t === 'grass' && this.isDesert(map, x, y)) t = 'desert';  // occasional orange desert
+    if (x < 6 && t === 'water') t = 'grass';                      // guarantee a dry start
+    if (x < this.START_W && (t === 'highland' || t === 'drygrass' || t === 'desert')) t = 'grass';
+    return t;
+  },
+  // terrain is purely elevation-driven — independent of the resource layer, so ore can
+  // sit on any terrain (the ground under it shows through). Ore is suppressed on sand.
+  waterAt(map, x, y)    { return !!map && x >= 0 && this.terrainType(map, x, y) === 'water'; },
+  beachAt(map, x, y)    { return !!map && this.terrainType(map, x, y) === 'sand'; },
+  drygrassAt(map, x, y) { return !!map && this.terrainType(map, x, y) === 'drygrass'; },
+  desertAt(map, x, y)   { return !!map && this.terrainType(map, x, y) === 'desert'; },
+  highlandAt(map, x, y) { return !!map && this.terrainType(map, x, y) === 'highland'; },
+
   // deterministic grass shade index (0..2) for subtle terrain variation
   grassShade(map, x, y) {
     const h = (x * 73856093) ^ (y * 19349663) ^ ((map?.seed || 0) | 0);
     return (h >>> 3) % 3;
+  },
+
+  // deterministic obstacle at a tile (or null): clustered forests + rare boulders.
+  // Ore tiles stay clear so resource patches are always buildable. Returns
+  // {kind:'tree'|'rock', variant} — `variant` indexes the sprite list in the renderer.
+  obstacleAt(map, x, y) {
+    if (!map || x < 0 || y < 0 || y >= map.height) return null;
+    if (this.oreAt(map, x, y)) return null;
+    if (this.terrainType(map, x, y) !== 'grass') return null;   // forests grow only on grass
+    const seed = (map.seed || 0) | 0;
+    const H = (a, b) => {
+      let h = (Math.imul(a, 374761393) ^ Math.imul(b, 668265263) ^ seed) | 0;
+      h = Math.imul(h ^ (h >>> 13), 1274126177);
+      return (h ^ (h >>> 16)) >>> 0;
+    };
+    const h = H(x, y);
+    if (h % 100 < 2) return { kind: 'rock', variant: (h >>> 7) };           // ~2% boulders
+    const fc = H(Math.floor(x / 5) * 7 + 1, Math.floor(y / 5) * 13 + 3);    // 5×5 forest clusters
+    if (fc % 100 < 26 && (h >>> 3) % 100 < 42) return { kind: 'tree', variant: (h >>> 9) };  // sparser woods
+    return null;
   },
 };

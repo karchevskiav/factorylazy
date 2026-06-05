@@ -434,17 +434,89 @@ print("INTEGRITY:", "OK" if not errs else ("\n  "+"\n  ".join(errs)))
 # 1024×1024 sheets of 128px rock clusters. We crop a few good cells of each.
 GFX = os.path.join(BASE, "graphics")
 TERRAINDIR = os.path.join(ROOT, "assets/terrain")
+# Factorio terrain tiles are edge-agnostic (any tile abuts any other seamlessly — that's
+# why the game shows no grid). We assemble many solid variant tiles from a sheet into one
+# big NxN texture; the renderer samples it by world coordinates, so the surface repeats
+# only every N tiles, has no per-tile seams, and needs no rotation (tiles keep direction).
+import random as _random
+def _solid_cells(sheet, rrange, crange, keep=None):
+    out = []
+    for r in rrange:
+        for c in crange:
+            t = sheet.crop((c*64, r*64, c*64+64, r*64+64)).convert("RGBA")
+            if min(p[3] for p in t.getdata()) < 250:        # skip transparent/edge cells
+                continue
+            if keep:
+                px = list(t.convert("RGB").getdata()); n = len(px)
+                R = sum(p[0] for p in px)/n; G = sum(p[1] for p in px)/n; B = sum(p[2] for p in px)/n
+                if not keep(R, G, B):
+                    continue
+            out.append((c, r))
+    return out
+def _build_atlas(sheet, cells, out_path, seed, N=8):
+    if not cells:
+        print("atlas skipped (no cells):", out_path); return
+    rnd = _random.Random(seed)
+    atlas = Image.new("RGBA", (N*64, N*64))
+    for gy in range(N):
+        for gx in range(N):
+            c, r = rnd.choice(cells)
+            atlas.paste(sheet.crop((c*64, r*64, c*64+64, r*64+64)), (gx*64, gy*64))
+    atlas.save(out_path)
+
+# multiply-tint an RGBA tile by (tr,tg,tb), clamped to 0..255 (used for foliage + desert)
+def _tint(img, t):
+    r, g, b, a = img.split()
+    r = r.point(lambda v: min(255, int(v * t[0])))
+    g = g.point(lambda v: min(255, int(v * t[1])))
+    b = b.point(lambda v: min(255, int(v * t[2])))
+    return Image.merge("RGBA", (r, g, b, a))
+
 def extract_terrain():
     if not Image: return
     os.makedirs(TERRAINDIR, exist_ok=True)
-    # grass: three full interior tiles
+    # grass (lush green) + drygrass (olive, the grass→highland intermediate biome)
     try:
-        g = Image.open(os.path.join(GFX, "terrain/grass-1.png"))
-        # solid, uniformly-lit interior tiles (the sheet has transparent cells we must avoid)
-        for i, (c, r) in enumerate([(8, 6), (10, 5), (12, 6)]):
-            g.crop((c*64, r*64, c*64+64, r*64+64)).save(os.path.join(TERRAINDIR, f"grass-{i}.png"))
+        g = Image.open(os.path.join(GFX, "terrain/grass-1.png")).convert("RGBA")
+        green = _solid_cells(g, range(1, 9), range(2, 40), lambda R, G, B: G - (R + B) / 2 > 20)
+        olive = _solid_cells(g, range(1, 9), range(2, 40), lambda R, G, B: 8 <= G - (R + B) / 2 <= 19)
+        _build_atlas(g, green, os.path.join(TERRAINDIR, "grass-atlas.png"), 0xA11)
+        _build_atlas(g, olive, os.path.join(TERRAINDIR, "drygrass-atlas.png"), 0xB22)
     except Exception as e:
-        print("grass extract failed:", e)
+        print("grass atlas failed:", e)
+    # highland: rocky brown upland from dirt-4
+    try:
+        dd = Image.open(os.path.join(GFX, "terrain/dirt-4.png")).convert("RGBA")
+        _build_atlas(dd, _solid_cells(dd, range(1, 9), range(2, 40)), os.path.join(TERRAINDIR, "highland-atlas.png"), 0xC33)
+    except Exception as e:
+        print("highland atlas failed:", e)
+    # desert: red-desert pushed toward vivid orange
+    try:
+        rd = Image.open(os.path.join(GFX, "terrain/red-desert-3.png")).convert("RGBA")
+        cells = _solid_cells(rd, range(1, 9), range(2, 40))
+        if cells:
+            rnd = _random.Random(0xD44); a = Image.new("RGBA", (8 * 64, 8 * 64))
+            for gy in range(8):
+                for gx in range(8):
+                    c, r = rnd.choice(cells)
+                    a.paste(_tint(rd.crop((c*64, r*64, c*64+64, r*64+64)), (1.18, 0.92, 0.62)), (gx*64, gy*64))
+            a.save(os.path.join(TERRAINDIR, "desert-atlas.png"))
+    except Exception as e:
+        print("desert atlas failed:", e)
+    # sand atlas
+    try:
+        sd = Image.open(os.path.join(GFX, "terrain/sand-1.png")).convert("RGBA")
+        sand = _solid_cells(sd, range(2, 16), range(2, 40), lambda R, G, B: (R + G + B) / 3 > 110)
+        _build_atlas(sd, sand, os.path.join(TERRAINDIR, "sand-atlas.png"), 0xC33)
+    except Exception as e:
+        print("sand atlas failed:", e)
+    # water atlas (water1 is a single row of solid variants)
+    try:
+        w = Image.open(os.path.join(GFX, "terrain/water/water1.png")).convert("RGBA")
+        wcells = _solid_cells(w, range(0, w.height // 64), range(0, w.width // 64))
+        _build_atlas(w, wcells, os.path.join(TERRAINDIR, "water-atlas.png"), 0xD44)
+    except Exception as e:
+        print("water atlas failed:", e)
     # ore clusters: 4 full cells per ore, keyed by the in-game resource key
     ore_src = {"ironOre":"iron-ore","copperOre":"copper-ore","coal":"coal","stone":"stone","uraniumOre":"uranium-ore"}
     cells = [(0,0),(1,1),(2,2),(3,0)]
@@ -455,6 +527,14 @@ def extract_terrain():
                 o.crop((c*128, r*128, c*128+128, r*128+128)).save(os.path.join(TERRAINDIR, f"ore-{reskey}-{i}.png"))
         except Exception as e:
             print(f"ore extract failed ({name}):", e)
+    # crude oil: a strip of 5 oily-seep frames — take 4 as the on-ground "ore" sprites
+    try:
+        oil = Image.open(os.path.join(GFX, "entity/crude-oil/crude-oil.png")).convert("RGBA")
+        fw = oil.width // 5
+        for i in range(4):
+            oil.crop((i*fw, 0, i*fw+fw, oil.height)).save(os.path.join(TERRAINDIR, "ore-crudeOil-%d.png" % i))
+    except Exception as e:
+        print("crude-oil extract failed:", e)
     print("wrote terrain tiles to assets/terrain/")
 extract_terrain()
 
@@ -486,6 +566,56 @@ def extract_decor():
     open(os.path.join(ROOT, "js/data/decor.js"), "w").write("\n".join(body))
     print("wrote", len(out), "decoratives + js/data/decor.js")
 extract_decor()
+
+# ---- obstacles: trees (composited) + boulders (rocks) --------------------
+# Trees are layered sprites: a trunk sheet + a leaves sheet (the leaves sheet
+# packs several wind frames side by side). We take the first leaf frame, stack
+# it on the trunk, autocrop, and save one flat tree PNG. Rocks are single
+# decorative sprites copied as-is. Sizes go to js/data/obstacles.js for aspect.
+TREE_PICKS = [("02","a"),("09","d"),("03","a"),("01","a"),("09","a"),("09","b")]
+ROCK_PICKS = ["big-rock/big-rock-01","big-rock/big-rock-06","big-rock/big-rock-12",
+              "huge-rock/huge-rock-03","huge-rock/huge-rock-08","medium-rock/medium-rock-03"]
+# Factorio tree leaves are authored near-neutral and tinted green at runtime; we
+# bake a foliage tint so they don't read as washed-out pink/grey on the map.
+LEAF_TINT = (0.58, 0.82, 0.40)
+def _compose_tree(tnum, var):
+    base = os.path.join(GFX, "entity/tree", tnum)
+    trunk = Image.open(os.path.join(base, f"tree-{tnum}-{var}-trunk.png")).convert("RGBA")
+    leaves = Image.open(os.path.join(base, f"tree-{tnum}-{var}-leaves.png")).convert("RGBA")
+    frames = max(1, round(leaves.width / trunk.width))
+    leaf = _tint(leaves.crop((0, 0, leaves.width // frames, leaves.height)), LEAF_TINT)
+    W = max(trunk.width, leaf.width); CH = int(trunk.height * 1.4)
+    c = Image.new("RGBA", (W, CH), (0, 0, 0, 0))
+    c.alpha_composite(trunk, ((W - trunk.width) // 2, CH - trunk.height))
+    c.alpha_composite(leaf, ((W - leaf.width) // 2, CH - trunk.height - int(leaf.height * 0.55)))
+    bb = c.getbbox()
+    return c.crop(bb) if bb else c
+def extract_obstacles():
+    if not Image: return
+    odir = os.path.join(ROOT, "assets/obstacles"); os.makedirs(odir, exist_ok=True)
+    trees, rocks = [], []
+    for i, (tn, v) in enumerate(TREE_PICKS):
+        try:
+            im = _compose_tree(tn, v); dst = f"tree-{i}.png"
+            im.save(os.path.join(odir, dst)); trees.append((f"assets/obstacles/{dst}", im.width, im.height))
+        except Exception as e: print(f"tree {tn}-{v} failed:", e)
+    for i, rel in enumerate(ROCK_PICKS):
+        try:
+            im = Image.open(os.path.join(GFX, "decorative", rel + ".png")).convert("RGBA")
+            dst = f"rock-{i}.png"; im.save(os.path.join(odir, dst))
+            rocks.append((f"assets/obstacles/{dst}", im.width, im.height))
+        except Exception as e: print(f"rock {rel} failed:", e)
+    def arr(items): return "[" + ", ".join(f"{{src:'{s}',w:{w},h:{h}}}" for (s, w, h) in items) + "]"
+    js = ["// data/obstacles.js — AUTO-GENERATED by tools/extract.py.",
+          "// Map obstacles: clear them for resources; you cannot build on them.",
+          "// `yield` is granted once when an obstacle is cleared; sprites carry native size.",
+          "export const OBSTACLES = {",
+          f"  tree: {{ kind:'tree', label:'Tree', yield:{{wood:2}}, sprites:{arr(trees)} }},",
+          f"  rock: {{ kind:'rock', label:'Boulder', yield:{{stone:6,coal:3}}, sprites:{arr(rocks)} }},",
+          "};\n"]
+    open(os.path.join(ROOT, "js/data/obstacles.js"), "w").write("\n".join(js))
+    print("wrote", len(trees), "trees +", len(rocks), "rocks + js/data/obstacles.js")
+extract_obstacles()
 
 # ---- crop any remaining mipmap strips in assets/icons (idempotent) -------
 if Image:

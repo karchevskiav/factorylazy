@@ -6,6 +6,7 @@ import { RESOURCES } from './data/resources.js';
 import { BUILDINGS } from './data/buildings.js';
 import { POWER }     from './data/power.js';
 import { DECOR }     from './data/decor.js';
+import { OBSTACLES } from './data/obstacles.js';
 import { MapGen }    from './map.js';
 import { I18N }      from './i18n.js';
 
@@ -41,10 +42,11 @@ export const MapView = {
     for (const k in BUILDINGS) add(BUILDINGS[k].img);
     for (const k in POWER)     add(POWER[k].img);
     const addT = (key) => { const im = new Image(); im.src = 'assets/terrain/' + key + '.png'; this.terr[key] = im; };
-    for (let i = 0; i < 3; i++) addT('grass-' + i);
-    for (const o of ['ironOre', 'copperOre', 'coal', 'stone', 'uraniumOre'])
+    for (const t of ['grass', 'water', 'sand', 'highland', 'drygrass', 'desert']) addT(t + '-atlas');
+    for (const o of ['ironOre', 'copperOre', 'coal', 'stone', 'uraniumOre', 'crudeOil'])
       for (let i = 0; i < 4; i++) addT('ore-' + o + '-' + i);
     for (const d of DECOR) add(d.src);
+    for (const k in OBSTACLES) for (const sp of OBSTACLES[k].sprites) add(sp.src);
   },
   decorHash(x, y) {
     let h = (x * 374761393) ^ (y * 668265263) ^ ((GameState.state.map.seed || 0) | 0);
@@ -54,6 +56,50 @@ export const MapView = {
   drawn(im, sx, sy, sz) {
     if (im && im.complete && im.naturalWidth) { this.ctx.drawImage(im, sx, sy, sz, sz); return true; }
     return false;
+  },
+  // Draw a terrain tile by sampling the type's seamless atlas at world cell (x,y). Adjacent
+  // world tiles map to adjacent atlas cells, so the surface is continuous (no per-tile seam)
+  // and only repeats every N tiles — and the directional texture is never rotated.
+  atlasCell(type, x, y) {
+    const a = this.terr[type + '-atlas'];
+    if (!a || !a.complete || !a.naturalWidth) return null;
+    const N = a.naturalWidth / 64;
+    return { a, N, cx: ((x % N) + N) % N, cy: ((y % N) + N) % N };
+  },
+  tileWorld(type, x, y, sx, sy) {
+    const t = this.atlasCell(type, x, y);
+    if (!t) return false;
+    this.ctx.drawImage(t.a, t.cx * 64, t.cy * 64, 64, 64, sx, sy, TILE, TILE);
+    return true;
+  },
+
+  // a cached atlas cell faded out from one edge/corner, used to bleed a neighbouring terrain
+  // type softly across a boundary. Keyed by the neighbour's atlas cell so the blend matches.
+  fades: {},
+  fadeTile(type, x, y, dir) {
+    const t = this.atlasCell(type, x, y);
+    if (!t) return null;
+    const key = type + t.cx + '_' + t.cy + dir;
+    if (this.fades[key]) return this.fades[key];
+    const c = document.createElement('canvas'); c.width = c.height = TILE;
+    const g = c.getContext('2d'); g.drawImage(t.a, t.cx * 64, t.cy * 64, 64, 64, 0, 0, TILE, TILE);
+    const F = 0.78 * TILE, T = TILE;
+    // edges fade linearly from one side; corners fade radially from one corner so the
+    // blend wraps the corners too (otherwise un-blended corners read as crosses/stripes).
+    const grad =
+        dir === 'N'  ? g.createLinearGradient(0, 0, 0, F)
+      : dir === 'S'  ? g.createLinearGradient(0, T, 0, T - F)
+      : dir === 'W'  ? g.createLinearGradient(0, 0, F, 0)
+      : dir === 'E'  ? g.createLinearGradient(T, 0, T - F, 0)
+      : dir === 'NW' ? g.createRadialGradient(0, 0, 0, 0, 0, F)
+      : dir === 'NE' ? g.createRadialGradient(T, 0, 0, T, 0, F)
+      : dir === 'SW' ? g.createRadialGradient(0, T, 0, 0, T, F)
+      :                g.createRadialGradient(T, T, 0, T, T, F);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.globalCompositeOperation = 'destination-in';
+    g.fillStyle = grad; g.fillRect(0, 0, TILE, TILE);
+    this.fades[key] = c; return c;
   },
   oreVariant(x, y) {
     const h = (x * 92837) ^ (y * 689287) ^ ((GameState.state.map.seed || 0) | 0);
@@ -77,11 +123,14 @@ export const MapView = {
         this.startMining(); return;
       }
       if (e.button === 1 || (e.button === 0 && this.place === null && !ent)) {
-        this.drag = { startX: e.clientX, startCam: this.camPx };
+        this.drag = { startX: e.clientX, startCam: this.camPx }; this.dragMoved = false;
       }
     });
     window.addEventListener('mousemove', (e) => {
-      if (this.drag) { this.camPx = Math.max(0, this.drag.startCam - (e.clientX - this.drag.startX)); this.render(); return; }
+      if (this.drag) {
+        if (Math.abs(e.clientX - this.drag.startX) > 3) this.dragMoved = true;
+        this.camPx = Math.max(0, this.drag.startCam - (e.clientX - this.drag.startX)); this.render(); return;
+      }
     });
     window.addEventListener('mouseup', () => { this.drag = null; this.stopMining(); });
     c.addEventListener('mousemove', (e) => {
@@ -89,9 +138,10 @@ export const MapView = {
     });
     c.addEventListener('mouseleave', () => { this.hover.inside = false; this.render(); });
     c.addEventListener('click', (e) => {
-      if (this.drag) return;
+      if (this.dragMoved) { this.dragMoved = false; return; }   // ignore the click that ends a pan
       const t = this.toTile(e);
       if (this.place) this.tryPlace(t.x, t.y);
+      else if (GameState.obstacleAt(t.x, t.y)) this.clearObstacle(t.x, t.y);
       else this.selectAt(t.x, t.y);
     });
     c.addEventListener('contextmenu', (e) => {
@@ -238,19 +288,66 @@ export const MapView = {
     return im && im.complete && im.naturalWidth;
   },
 
+  // draw a tree/boulder anchored at the bottom-centre of its tile (trees overhang up).
+  // A single pixels→tile scale per kind is applied to BOTH dimensions, so every sprite
+  // keeps its true aspect ratio and species differ in size naturally (no stretching).
+  OB_SCALE: { tree: 1 / 155, rock: 1 / 150 },   // tiles per source pixel
+  drawObstacle(x, y) {
+    const ob = GameState.obstacleAt(x, y); if (!ob) return;
+    const def = OBSTACLES[ob.kind]; const sp = def.sprites[ob.variant % def.sprites.length];
+    const im = this.imgs[sp.src]; if (!im || !im.complete || !im.naturalWidth) return;
+    const k = TILE * (this.OB_SCALE[ob.kind] || 1 / 150);
+    const w = sp.w * k, h = sp.h * k;
+    const dx = x * TILE - this.camPx + (TILE - w) / 2, dy = y * TILE + TILE - h;
+    this.ctx.drawImage(im, dx, dy, w, h);
+  },
+
+  // grant a cleared obstacle's yield and mark its tile cleared
+  clearObstacle(x, y) {
+    const ob = GameState.obstacleAt(x, y); if (!ob) return;
+    GameState.state.cleared[x + ',' + y] = 1;
+    const def = OBSTACLES[ob.kind], s = GameState.state;
+    const parts = [];
+    for (const r in def.yield) {
+      s.resources[r] = (s.resources[r] || 0) + def.yield[r];
+      s.totals.produced[r] = (s.totals.produced[r] || 0) + def.yield[r];
+      parts.push(`+${def.yield[r]} ${window.UI.rn(r)}`);
+    }
+    window.UI.toast(I18N.t('toast_cleared', I18N.t('obstacle_' + ob.kind), parts.join(', ')));
+    window.UI.renderDynamic(); this.render();
+  },
+
   render() {
     const ctx = this.ctx; if (!ctx) return;
     const s = GameState.state; if (!s || !s.map) return;
     const W = this.canvas.width, H = this.canvas.height;
     const c0 = Math.floor(this.camPx / TILE), c1 = c0 + Math.ceil(W / TILE) + 1;
 
-    // terrain pass: grass everywhere, sparse decoratives on plain (non-ore) grass
+    // terrain pass: world-sampled seamless textures, sparse decoratives on plain grass
     for (let x = c0; x < c1; x++) {
       for (let y = 0; y < s.map.height; y++) {
         const sx = x * TILE - this.camPx, sy = y * TILE;
-        if (!this.drawn(this.terr['grass-' + MapGen.grassShade(s.map, x, y)], sx, sy, TILE)) {
-          ctx.fillStyle = GRASS[MapGen.grassShade(s.map, x, y)]; ctx.fillRect(sx, sy, TILE, TILE);
+        if (MapGen.waterAt(s.map, x, y)) {                       // lakes
+          if (!this.tileWorld('water', x, y, sx, sy)) { ctx.fillStyle = '#1c5a72'; ctx.fillRect(sx, sy, TILE, TILE); }
+          continue;                                              // no decor on water
         }
+        if (MapGen.beachAt(s.map, x, y)) {                       // sandy beach following the shore contour
+          if (!this.tileWorld('sand', x, y, sx, sy)) { ctx.fillStyle = '#c4aa6e'; ctx.fillRect(sx, sy, TILE, TILE); }
+          continue;                                              // bare sand — no decor
+        }
+        if (MapGen.desertAt(s.map, x, y)) {                      // orange desert biome
+          if (!this.tileWorld('desert', x, y, sx, sy)) { ctx.fillStyle = '#bd6922'; ctx.fillRect(sx, sy, TILE, TILE); }
+          continue;
+        }
+        if (MapGen.drygrassAt(s.map, x, y)) {                    // intermediate dry-grass biome
+          if (!this.tileWorld('drygrass', x, y, sx, sy)) { ctx.fillStyle = '#605227'; ctx.fillRect(sx, sy, TILE, TILE); }
+          continue;
+        }
+        if (MapGen.highlandAt(s.map, x, y)) {                    // brown highland
+          if (!this.tileWorld('highland', x, y, sx, sy)) { ctx.fillStyle = '#6b4a2a'; ctx.fillRect(sx, sy, TILE, TILE); }
+          continue;                                              // bare upland — no decor
+        }
+        if (!this.tileWorld('grass', x, y, sx, sy)) { ctx.fillStyle = GRASS[0]; ctx.fillRect(sx, sy, TILE, TILE); }
         if (!MapGen.oreAt(s.map, x, y) && DECOR.length) {
           // sparse decoratives on plain grass (HR sprites: 128px ≈ one tile)
           const hh = this.decorHash(x, y);
@@ -267,6 +364,24 @@ export const MapView = {
       }
     }
 
+    // soft terrain transitions: bleed the higher-priority terrain across each boundary
+    // with an alpha fade, so water↔sand↔grass↔highland edges are smooth gradients, not
+    // hard lines. Water is lowest, so sand dissolves softly into the shoreline.
+    const PRIO = { water: -1, sand: 0, desert: 1, grass: 2, drygrass: 3, highland: 4 };
+    for (let x = c0; x < c1; x++) for (let y = 0; y < s.map.height; y++) {
+      const t = MapGen.terrainType(s.map, x, y);
+      if (!(t in PRIO)) continue;
+      const sx = x * TILE - this.camPx, sy = y * TILE;
+      for (const [dx, dy, dir] of [[0, -1, 'N'], [0, 1, 'S'], [-1, 0, 'W'], [1, 0, 'E'],
+                                   [-1, -1, 'NW'], [1, -1, 'NE'], [-1, 1, 'SW'], [1, 1, 'SE']]) {
+        const nt = MapGen.terrainType(s.map, x + dx, y + dy);
+        if (!(nt in PRIO) || PRIO[nt] <= PRIO[t]) continue;     // only a higher neighbour bleeds in
+        const f = this.fadeTile(nt, x + dx, y + dy, dir);
+        if (f) ctx.drawImage(f, sx, sy);
+      }
+    }
+
+
     // ore pass (after all grass so the slight overscan can feather onto neighbours)
     const OVER = 5;                       // px the ore sprite bleeds past its tile on each side
     for (let x = c0; x < c1; x++) {
@@ -281,6 +396,10 @@ export const MapView = {
         }
       }
     }
+
+    // obstacle pass: trees & boulders (ascending y so nearer ones overlap farther)
+    for (let y = 0; y < s.map.height; y++)
+      for (let x = c0; x < c1; x++) this.drawObstacle(x, y);
 
     // entities
     for (const e of s.entities) {
