@@ -99,6 +99,50 @@ effects are curated for this engine — edit it directly.
 - **Balance:** tweak `js/config.js` (tick rate, offline rate/cap, rocket goal) and the
   `costMul` / `speed` / `time` fields in the data tables.
 
+## Performance — rendering (planned optimization)
+
+> Idea captured for later — **not yet implemented.**
+
+`MapView.render()` currently does a **full scene redraw every call**, and is called far
+more often than needed:
+
+- 5×/sec from the game tick (`UI.renderDynamic()` → `MapView.render()`),
+- **once per canvas `mousemove`, untrottled** (60–150 full redraws/sec while the cursor moves),
+- once per pan-drag frame and wheel event,
+- ~60/sec during hand-mining (the pickaxe RAF loop).
+
+Each redraw, for the ~460 visible tiles (≈23×20 at a 900px-wide canvas):
+
+- recomputes deterministic procedural noise (`waterAt / beachAt / desertAt / drygrassAt /
+  highlandAt / oreAt / terrainType`) for every tile, every frame, even though the map is
+  immutable for a given seed;
+- the transition/fade pass calls `terrainType` ~9× per tile (self + 8 neighbours), so each
+  tile's biome is evaluated ~9 times per pass;
+- issues ~500–700 `drawImage` calls (terrain + fades + ore + obstacles + entities).
+
+It's cheap at the 5/sec tick cadence, but wasteful during mouse interaction: hover changes
+one tile yet triggers a complete static+dynamic redraw.
+
+**Planned fixes, by impact:**
+
+1. **Cache the static layer.** Render terrain + transitions + ore + obstacles once into an
+   offscreen canvas keyed by `(seed, camPx, canvas size)`; on `render()` blit that single
+   image, then draw only the dynamic layer (entities, placement ghost, selection outline,
+   progress bars, mining pickaxe). Invalidate only on pan / resize / obstacle-clear /
+   map-change. Removes ~95% of per-frame work when the camera is static (the common case).
+2. **Throttle via `requestAnimationFrame`.** Replace direct `render()` calls with a
+   `requestRender()` that sets a dirty flag and schedules a single rAF, coalescing a burst of
+   `mousemove` events into ≤1 render per display frame.
+3. **Memoize map queries.** Cache `terrainType / oreAt / waterAt` results in a `Map` keyed by
+   `"x,y"` (the map never changes mid-game) — kills the ~9× redundancy in the fade pass and all
+   cross-frame recomputation. Largely subsumed by #1 if the static layer is cached.
+4. **Late-game:** add a spatial index for `entityAt` instead of a linear `Array.find` on every
+   `mousemove`.
+
+Separately, `UI.renderDynamic()` also runs every tick and walks all `RESOURCES` and
+`BUILDINGS + POWER` (resource list + palette gating) — a DOM cost independent of the canvas,
+worth revisiting if tick work becomes a bottleneck.
+
 ## Status
 
 Implements the full MVP chain (iterations 1–2) plus a working tech tree, modules,

@@ -60,7 +60,7 @@ export const UI = {
     I18N.init();
     this.applyLang();
     document.getElementById('lp-research').addEventListener('change', () => this.renderResearch());
-    document.getElementById('rp-stats').addEventListener('change', () => { this.renderSparks(true); this.updateTotals(); });
+    document.getElementById('rp-stats').addEventListener('change', () => this.renderSparks(true));
     document.getElementById('rp-map').addEventListener('change', () => MapView.resize());
 
     const sv = Save.load();
@@ -75,7 +75,7 @@ export const UI = {
     const lb = document.getElementById('lang-btn'); if (lb) lb.textContent = '🌐 ' + I18N.label();
     if (!this.booted) return;                       // dynamic panels not built yet
     this.renderResources(); this.renderPalette();
-    this.renderResearch(); this.renderStatsTable(); this.updateTotals(); this.renderDynamic();
+    this.renderResearch(); this.renderStatsTable(); this.renderDynamic();
     if (MapView.selected) this.showInspector(MapView.selected);
   },
 
@@ -423,7 +423,7 @@ export const UI = {
     }
 
     this.checkRocket();
-    if (document.getElementById('rp-stats').checked) { this.renderSparks(false); this.updateTotals(); }
+    if (document.getElementById('rp-stats').checked) this.renderSparks(false);
   },
 
   /* ---------------- statistics ---------------- */
@@ -529,6 +529,7 @@ export const UI = {
     const launches = s.launches + 1;
     const bonus = Math.pow(1.5, launches);
     if (!confirm(I18N.t('confirm_launch', bonus.toFixed(1), launches))) return;
+    this.showTotalsModal();                    // summarise the run before wiping it
     this.stop();
     GameState.fresh();
     GameState.state.launches = launches;

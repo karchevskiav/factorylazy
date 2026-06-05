@@ -1,4 +1,4 @@
-// config.js — tunable constants for the engine and economy.
+ // config.js — tunable constants for the engine and economy.
 export const TICK_MS    = 200;          // 5 ticks per second
 export const TICK_SEC   = TICK_MS / 1000;
 export const SAVE_KEY   = 'factorio_idle_save';

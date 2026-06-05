@@ -196,6 +196,8 @@ input[name=lpane],input[name=rpane]{display:none;}
 .modal h2{font-family:var(--pixel);font-size:14px;color:var(--green);margin:0 0 16px;}
 .modal p{line-height:1.6;font-size:13px;}
 .modal .btns{display:flex;gap:12px;justify-content:center;margin-top:20px;}
+.modal.modal-wide{max-width:560px;}
+.totals-scroll{max-height:56vh;overflow-y:auto;margin-top:4px;}
 .hidden{display:none !important;}
 
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--green);color:var(--text);padding:9px 16px;border-radius:4px;font-size:12px;z-index:60;opacity:0;transition:opacity .3s;pointer-events:none;}
