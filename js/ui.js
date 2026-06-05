@@ -177,7 +177,8 @@ export const UI = {
     { id: 'smelting', cats: ['smelt'] },
     { id: 'crafting', cats: ['craft', 'chem', 'centrifuge'] },
     { id: 'power',    cats: [] },                          // every POWER generator
-    { id: 'other',    cats: ['beacon'] },
+    { id: 'military', cats: ['military'] },
+    { id: 'other',    cats: ['beacon', 'lab'] },
   ],
   palGroupOf(t) {
     if (POWER[t]) return 'power';
@@ -220,7 +221,7 @@ export const UI = {
       }
     } else if (d.recipes && d.recipes.length) {
       const s = GameState.state;
-      const opts = d.recipes.filter(r => r !== 'rocketPart' || s.rocketUnlocked)
+      const opts = d.recipes.filter(r => (r !== 'rocketPart' || s.rocketUnlocked) && GameState.recipeUnlocked(r))
         .map(r => `<option value="${r}" ${ent.recipe === r ? 'selected' : ''}>${this.rn(r)}</option>`).join('');
       body += `<div class="insp-row">${I18N.t('insp_recipe')} <select onchange="UI.assignRecipe(${ent.id}, this.value)">${opts}</select></div>`;
       const rec = RECIPES[ent.recipe];
@@ -230,10 +231,20 @@ export const UI = {
       }
     } else if (d.cat === 'beacon') {
       body += `<div class="insp-row dim">${I18N.t('insp_beacon', d.radius)}</div>`;
+    } else if (d.cat === 'lab') {
+      body += `<div class="insp-row dim">${I18N.t('insp_lab')}</div>`;
+    } else if (d.military) {
+      body += `<div class="insp-row dim">${ent.type === 'gunTurret'
+        ? I18N.t('insp_turret', ent.ammo || 0) : I18N.t('insp_wall')}</div>`;
     } else if (POWER[ent.type]) {
       body += `<div class="insp-row dim">${d.fuel
         ? I18N.t('insp_power_fuel', d.mw, d.fuelPerSec, this.rn(d.fuel))
         : I18N.t('insp_power_nofuel', d.mw)}</div>`;
+      if (d.neighborBonus) {
+        const adj = GameState.adjacentSameType(ent);
+        const eff = +(d.mw * (1 + d.neighborBonus * adj)).toFixed(1);
+        body += `<div class="insp-row dim">${I18N.t('insp_reactor_neighbor', Math.round(d.neighborBonus * 100), adj, eff)}</div>`;
+      }
     }
 
     if (d.slots > 0) {
@@ -359,10 +370,13 @@ export const UI = {
     // palette: visibility (locked tech ⇒ hidden), cost, affordability (⇒ disabled), active highlight
     const palette = document.getElementById('bld-palette');
     if (palette) {
+      const warMode = MapView.mode === 'war';
       for (const btn of palette.querySelectorAll('.palette-btn')) {
         const t = btn.dataset.type;
         const unlocked = BUILDINGS[t] ? GameState.isBuildingUnlocked(t) : GameState.isPowerUnlocked(t);
-        btn.hidden = !unlocked;
+        const mil = !!(BUILDINGS[t] && BUILDINGS[t].military);
+        // war screen shows only military buildings; the factory hides them
+        btn.hidden = !unlocked || (warMode ? !mil : mil);
         const cost = POWER[t] ? this.powerCost(t, GameState.placedOf(t)) : this.buildingCost(t, GameState.placedOf(t));
         btn.disabled = !this.canAfford(cost);
         btn.classList.toggle('active', MapView.place === t);

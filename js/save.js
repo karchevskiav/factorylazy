@@ -24,7 +24,7 @@ export const Save = {
   wipe() { try { localStorage.removeItem(SAVE_KEY); } catch (e) {} },
 
   // is this save compatible with the current (map-based) engine?
-  compatible(loaded) { return loaded && loaded.version >= 2 && loaded.map && Array.isArray(loaded.entities); },
+  compatible(loaded) { return loaded && loaded.version >= 4 && loaded.map && Array.isArray(loaded.entities); },
 
   // merge a loaded save onto a fresh structure so new fields are never missing.
   // The map is regenerated deterministically from the stored seed.

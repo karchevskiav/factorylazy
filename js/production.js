@@ -38,23 +38,34 @@ export const Production = {
     if (!GameState.powerUnlocked()) return { produced: 0, consumed: 0, ratio: 1 };
     let produced = 0, consumed = 0;
 
-    // steam engines collectively burn coal from the shared pool; scale by what's available
-    const steam = GameState.placedOf('steamEngine');
-    if (steam > 0) {
-      const def = POWER.steamEngine;
-      const need = steam * def.fuelPerSec * TICK_SEC;
-      const have = s.resources.coal || 0;
-      const ratio = need > 0 ? Math.min(1, have / need) : 1;
-      s.resources.coal = Math.max(0, have - need * ratio);
-      produced += steam * def.mw * ratio;
+    // every generator type contributes MW; fuel-burners (steam/nuclear) scale by available fuel
+    for (const k in POWER) {
+      const ents = s.entities.filter(e => e.type === k);
+      const n = ents.length; if (!n) continue;
+      const def = POWER[k];
+      // total MW-units: 1 per generator, plus the neighbor bonus for reactors in a cluster
+      let units = n;
+      if (def.neighborBonus) {
+        units = 0;
+        for (const e of ents) units += 1 + def.neighborBonus * GameState.adjacentSameType(e);
+      }
+      if (def.fuel) {
+        const need = n * def.fuelPerSec * TICK_SEC;   // fuel scales with count, not with the bonus
+        const have = s.resources[def.fuel] || 0;
+        const ratio = need > 0 ? Math.min(1, have / need) : 1;
+        s.resources[def.fuel] = Math.max(0, have - need * ratio);
+        produced += units * def.mw * ratio;
+      } else {
+        produced += units * def.mw;
+      }
     }
-    produced += GameState.placedOf('solarPanel') * POWER.solarPanel.mw;
 
-    // consumption from every powered entity (machines + beacons)
+    // consumption from every powered entity (machines + beacons + labs)
     for (const e of s.entities) {
       const def = GameState.def(e.type);
       if (!def || !def.energy) continue;
-      if (BUILDINGS[e.type] && BUILDINGS[e.type].cat !== 'beacon' && !e.recipe) continue;
+      const c = BUILDINGS[e.type] && BUILDINGS[e.type].cat;
+      if (BUILDINGS[e.type] && !e.recipe && c !== 'beacon' && c !== 'lab') continue;
       const me = this.modEffect(e);
       consumed += def.energy * Math.max(0.1, 1 + me.energy);
     }
@@ -87,7 +98,7 @@ export const Production = {
       }
 
       const rec = RECIPES[e.recipe];
-      if (!rec) continue;
+      if (!rec || !GameState.recipeUnlocked(e.recipe)) continue;   // not researched yet
 
       // crafts wanted this step, then clamp by available inputs
       let crafts = speedMul / rec.time * dt * rateMods;
@@ -110,7 +121,7 @@ export const Production = {
       e._progress = ((e._progress || 0) + speedMul / rec.time * dt) % 1;
     }
 
-    Research.step(dt);
+    Research.step(dt, pwr.ratio);
     return { net, pwr };
   },
 };

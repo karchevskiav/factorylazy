@@ -349,7 +349,8 @@ def emit_recipes():
              "export const RECIPES = {"]
     for k,v in rows:
         ins = "{" + ", ".join(f"{i}:{a}" for i,a in v["inputs"].items()) + "}"
-        lines.append(f"  {k+':':24} {{out:{v['out']}, time:{v['time']}, inputs:{ins}, cat:'{v['cat']}'}},")
+        tech = f", tech:'{v['tech']}'" if v.get("tech") else ""
+        lines.append(f"  {k+':':24} {{out:{v['out']}, time:{v['time']}, inputs:{ins}, cat:'{v['cat']}'{tech}}},")
     lines.append("};\n")
     open(os.path.join(DATA,"recipes.js"),"w").write("\n".join(lines))
 
@@ -382,35 +383,154 @@ def jsrecipes(keys): return "[" + ",".join(f"'{k}'" for k in keys) + "]"
 # matching ore; 'land' = anywhere. `glyph` is a fallback if the PNG is missing.
 # Generators (steam/solar) live in power.js but their icons are copied here too.
 BLD = [
-  ("burnerDrill",    "Burner Mining Drill","burner-mining-drill",'⛏','mine','ore',  1,  0,0,{"ironPlate":5},1.18,None,           mine_keys),
+  ("burnerDrill",       "Burner Mining Drill","burner-mining-drill",'⛏','mine','ore',  1,  0,0,{"ironPlate":5},1.18,None,           mine_keys),
+  ("electricMiningDrill","Electric Mining Drill","electric-mining-drill",'⛏','mine','ore',2,0.09,3,{"ironGearWheel":10,"ironPlate":20,"electronicCircuit":5},1.2,None, mine_keys),
   ("offshorePump",   "Offshore Pump",      "offshore-pump",      '🚰','pump','land', 1,  0,0,{"ironPlate":3},1.10,None,           pump_keys),
-  ("pumpjack",       "Pumpjack",           "pumpjack",           '🛢','oil','land',  1,  1,0,{"ironGearWheel":10,"steelPlate":5,"electronicCircuit":5,"pipe":10},1.2,"oilProcessing", oil_keys),
+  ("pumpjack",       "Pumpjack",           "pumpjack",           '🛢','oil','land',  1,  1,0,{"ironGearWheel":10,"steelPlate":5,"electronicCircuit":5,"pipe":10},1.2,"oilGathering", oil_keys),
   ("stoneFurnace",   "Stone Furnace",      "stone-furnace",      '🔥','smelt','land',1,  0,0,{"stone":5},1.15,None,                smelt_keys),
-  ("electricFurnace","Electric Furnace",   "electric-furnace",   '🔥','smelt','land',2,  2,2,{"steelPlate":10,"stoneBrick":10,"advancedCircuit":5},1.2,"advancedMaterials", smelt_keys),
+  ("steelFurnace",   "Steel Furnace",      "steel-furnace",      '🔥','smelt','land',2,  0,0,{"steelPlate":6,"stoneBrick":10},1.16,"advancedMaterialProcessing", smelt_keys),
+  ("electricFurnace","Electric Furnace",   "electric-furnace",   '🔥','smelt','land',2,  2,2,{"steelPlate":10,"stoneBrick":10,"advancedCircuit":5},1.2,"advancedMaterialProcessing2", smelt_keys),
   ("assembler1",     "Assembling Machine 1","assembling-machine-1",'🔧','craft','land',0.5,0.75,0,{"ironPlate":9,"copperPlate":5},1.18,None, craft_keys),
   ("assembler2",     "Assembling Machine 2","assembling-machine-2",'🔧','craft','land',0.75,1.5,2,{"steelPlate":5,"ironGearWheel":10,"electronicCircuit":5},1.2,"automation2", craft_keys),
   ("assembler3",     "Assembling Machine 3","assembling-machine-3",'🔧','craft','land',1.25,3.5,4,{"steelPlate":20,"advancedCircuit":10,"processingUnit":5},1.22,"automation3", craft_keys),
+  ("oilRefinery",    "Oil Refinery",       "oil-refinery",       '🏭','chem','land',  1,  0.42,3,{"steelPlate":15,"ironGearWheel":10,"stoneBrick":10,"electronicCircuit":10,"pipe":10},1.2,"oilProcessing", ['petroleumGas','heavyOil','lightOil']),
   ("chemPlant",      "Chemical Plant",     "chemical-plant",     '⚗','chem','land',  1,  2.1,2,{"steelPlate":5,"ironGearWheel":5,"electronicCircuit":5,"pipe":5},1.2,"oilProcessing", chem_keys),
-  ("centrifuge",     "Centrifuge",         "centrifuge",         '☢','centrifuge','land',1,3.5,2,{"steelPlate":50,"advancedCircuit":20,"ironGearWheel":50,"concrete":100},1.25,"automation3", centrifuge_keys),
+  ("centrifuge",     "Centrifuge",         "centrifuge",         '☢','centrifuge','land',1,3.5,2,{"steelPlate":50,"advancedCircuit":20,"ironGearWheel":50,"concrete":100},1.25,"uraniumProcessing", centrifuge_keys),
+  ("rocketSilo",     "Rocket Silo",        "rocket-silo",        '🚀','craft','land', 1,  4,4,{"steelPlate":1000,"concrete":1000,"pipe":100,"processingUnit":200,"electricEngineUnit":200},1.3,"rocketSilo", ['rocketPart']),
+  ("lab",            "Lab",                "lab",                '🔬','lab','land',   1,  0.06,2,{"electronicCircuit":10,"ironGearWheel":10,"copperPlate":10},1.18,None, []),
+  # military buildings — placeable only on the war screen (place:'war')
+  ("stoneWall",      "Wall",               "stone-wall",         '🧱','military','war',0, 0,0,{"stone":5},1.0,None, []),
+  ("gunTurret",      "Gun Turret",         "gun-turret",         '🔫','military','war',0, 0,0,{"ironPlate":20,"ironGearWheel":10,"copperPlate":10},1.15,None, []),
 ]
-for g in ("steam-engine","solar-panel"): get_img(g)  # ensure generator icons exist in assets
+# ---- real building sprites (one clean frame of the entity graphic) -------
+# Crops frame 0 of each building's animation sheet (frame size parsed from the entity
+# block), autocrops, and saves to assets/buildings/. Footprints are the real in-game
+# tile sizes (not all 2×2). The renderer scales the sprite to fill the footprint.
+GFX = os.path.join(BASE, "graphics")
+BLDDIR = os.path.join(ROOT, "assets/buildings"); os.makedirs(BLDDIR, exist_ok=True)
+_ENT = read("entity/entities.lua") + read("entity/mining-drill.lua")
+def _ent_frame(name):
+    m = re.search(r'name\s*=\s*"' + re.escape(name) + r'"', _ENT)
+    if not m: return (None, None)
+    i = m.start(); d = 0
+    while i > 0:
+        i -= 1
+        if _ENT[i] == '}': d += 1
+        elif _ENT[i] == '{':
+            if d == 0: break
+            d -= 1
+    j = m.end(); d = 0
+    while j < len(_ENT):
+        if _ENT[j] == '{': d += 1
+        elif _ENT[j] == '}':
+            if d == 0: break
+            d -= 1
+        j += 1
+    b = _ENT[i:j + 1]
+    w = re.search(r'\bwidth\s*=\s*(\d+)', b); h = re.search(r'\bheight\s*=\s*(\d+)', b)
+    return (int(w.group(1)) if w else None, int(h.group(1)) if h else None)
+BSHEET = {
+    "burnerDrill": ("entity/burner-mining-drill/burner-mining-drill-N.png", "burner-mining-drill", None),
+    "offshorePump": ("entity/offshore-pump/offshore-pump_North.png", "offshore-pump", None),
+    "pumpjack": ("entity/pumpjack/pumpjack-base.png", "pumpjack", (261, 273)),
+    "stoneFurnace": ("entity/stone-furnace/stone-furnace.png", "stone-furnace", None),
+    "steelFurnace": ("entity/steel-furnace/steel-furnace.png", "steel-furnace", None),
+    "electricFurnace": ("entity/electric-furnace/electric-furnace.png", "electric-furnace", None),
+    "assembler1": ("entity/assembling-machine-1/assembling-machine-1.png", "assembling-machine-1", None),
+    "assembler2": ("entity/assembling-machine-2/assembling-machine-2.png", "assembling-machine-2", None),
+    "assembler3": ("entity/assembling-machine-3/assembling-machine-3.png", "assembling-machine-3", None),
+    "chemPlant": ("entity/chemical-plant/chemical-plant.png", "chemical-plant", None),
+    "oilRefinery": ("entity/oil-refinery/oil-refinery.png", "oil-refinery", None),
+    "centrifuge": ("entity/centrifuge/centrifuge-C.png", "centrifuge", None),
+    "rocketSilo": ("entity/rocket-silo/14-rocket-silo-front.png", "rocket-silo", None),
+    "lab": ("entity/lab/lab.png", "lab", None),
+    "stoneWall": ("entity/wall/wall-single.png", "stone-wall", None),
+    "gunTurret": ("entity/gun-turret/gun-turret-base.png", "gun-turret", None),
+    "steamEngine": ("entity/steam-engine/steam-engine-H.png", "steam-engine", None),
+    "solarPanel": ("entity/solar-panel/solar-panel.png", "solar-panel", None),
+    "accumulator": ("entity/accumulator/accumulator.png", "accumulator", None),
+    "nuclearReactor": ("entity/nuclear-reactor/reactor.png", "nuclear-reactor", None),
+}
+FOOT = {"burnerDrill": (2, 2), "electricMiningDrill": (3, 3), "offshorePump": (1, 1), "pumpjack": (3, 3),
+        "stoneFurnace": (2, 2), "steelFurnace": (2, 2), "electricFurnace": (3, 3),
+        "assembler1": (3, 3), "assembler2": (3, 3), "assembler3": (3, 3),
+        "oilRefinery": (5, 5), "chemPlant": (3, 3), "centrifuge": (3, 3), "rocketSilo": (9, 9),
+        "lab": (3, 3), "stoneWall": (1, 1), "gunTurret": (2, 2),
+        "beacon": (3, 3), "steamEngine": (5, 3), "solarPanel": (3, 3), "accumulator": (2, 2),
+        "nuclearReactor": (5, 5)}
+def build_sprite(bkey):
+    if not Image: return None
+    if bkey == "beacon":
+        try:
+            bot = Image.open(os.path.join(GFX, "entity/beacon/beacon-bottom.png")).convert("RGBA")
+            top = Image.open(os.path.join(GFX, "entity/beacon/beacon-top.png")).convert("RGBA")
+            W = max(bot.width, top.width); H = max(bot.height, top.height)
+            c = Image.new("RGBA", (W, H)); c.alpha_composite(bot, ((W - bot.width) // 2, H - bot.height))
+            c.alpha_composite(top, ((W - top.width) // 2, H - top.height))
+            bb = c.getbbox(); c = c.crop(bb) if bb else c
+            c.save(os.path.join(BLDDIR, "beacon.png")); return "assets/buildings/beacon.png"
+        except Exception as e: print("beacon sprite failed:", e); return None
+    if bkey == "gunTurret":
+        try:
+            base = os.path.join(GFX, "entity/gun-turret")
+            b = Image.open(os.path.join(base, "gun-turret-base.png")).convert("RGBA")
+            rais = Image.open(os.path.join(base, "gun-turret-raising.png")).convert("RGBA")
+            fw, fh = 130, 126                                   # raising frame; last frame = gun fully up
+            cols = rais.width // fw
+            idx = (rais.width // fw) * (rais.height // fh) - 1
+            col, row = idx % cols, idx // cols
+            gun = rais.crop((col * fw, row * fh, col * fw + fw, row * fh + fh))
+            W = max(b.width, gun.width); H = max(b.height, gun.height)
+            c = Image.new("RGBA", (W, H))
+            c.alpha_composite(b, ((W - b.width) // 2, (H - b.height) // 2))
+            c.alpha_composite(gun, ((W - gun.width) // 2, (H - gun.height) // 2))
+            bb = c.getbbox(); c = c.crop(bb) if bb else c
+            c.save(os.path.join(BLDDIR, "gunTurret.png")); return "assets/buildings/gunTurret.png"
+        except Exception as e: print("gunTurret sprite failed:", e); return None
+    if bkey == "rocketSilo":
+        try:
+            base = os.path.join(GFX, "entity/rocket-silo")
+            body = Image.open(os.path.join(base, "06-rocket-silo.png")).convert("RGBA")
+            dback = Image.open(os.path.join(base, "04-door-back.png")).convert("RGBA")
+            dfront = Image.open(os.path.join(base, "05-door-front.png")).convert("RGBA")
+            c = body.copy()
+            for d in (dback, dfront):
+                c.alpha_composite(d, ((body.width - d.width) // 2, (body.height - d.height) // 2))
+            bb = c.getbbox(); c = c.crop(bb) if bb else c
+            c.save(os.path.join(BLDDIR, "rocketSilo.png")); return "assets/buildings/rocketSilo.png"
+        except Exception as e: print("rocketSilo sprite failed:", e); return None
+    spec = BSHEET.get(bkey)
+    if not spec: return None
+    rel, ename, override = spec
+    try:
+        im = Image.open(os.path.join(GFX, rel)).convert("RGBA")
+        fw, fh = override if override else _ent_frame(ename)
+        if fw and fh and (fw < im.width or fh < im.height):
+            im = im.crop((0, 0, min(fw, im.width), min(fh, im.height)))
+        bb = im.getbbox(); im = im.crop(bb) if bb else im
+        im.save(os.path.join(BLDDIR, bkey + ".png")); return "assets/buildings/" + bkey + ".png"
+    except Exception as e:
+        print(f"sprite {bkey} failed:", e); return None
+for g in ("steamEngine", "solarPanel", "accumulator", "nuclearReactor"): build_sprite(g)  # generator sprites for power.js
 
 lines = ["// data/buildings.js — AUTO-GENERATED by tools/extract.py.",
-         "// Placeable on the map (2x2 each). cat selects recipes · speed scales rate · energy = MW.",
-         "// place:'ore' = drill must cover matching ore · img = map sprite · radius = beacon range.",
+         "// Placeable on the map. cat selects recipes · speed scales rate · energy = MW.",
+         "// w/h = real in-game footprint · img = real entity sprite · radius = beacon range.",
          "export const BUILDINGS = {"]
 for (k,name,icon,glyph_,cat,place,speed,energy,slots,cost,mul,unlock,recs) in BLD:
-    img = get_img(icon) or ""
+    img = build_sprite(k) or get_img(icon) or ""
+    w, h = FOOT.get(k, (2, 2))
     unl = f"'{unlock}'" if unlock else "null"
+    mil = " military:true," if cat == "military" else ""
     lines.append(f"  {k}: {{")
-    lines.append(f"    name:'{name}', icon:'{glyph_}', img:'{img}', color:'#3a3a3a', cat:'{cat}', place:'{place}', w:2, h:2,")
+    lines.append(f"    name:'{name}', icon:'{glyph_}', img:'{img}', color:'#3a3a3a', cat:'{cat}', place:'{place}', w:{w}, h:{h},{mil}")
     lines.append(f"    speed:{speed}, energy:{energy}, slots:{slots}, baseCost:{jsdict(cost)}, costMul:{mul}, unlock:{unl},")
     lines.append(f"    recipes:{jsrecipes(recs)},")
     lines.append("  },")
 # radius effect amplifier (no recipe) — boosts speed of buildings within `radius`
 lines.append("  beacon: {")
-lines.append(f"    name:'Beacon', icon:'❖', img:'{get_img('beacon') or ''}', color:'#2a6a8a', cat:'beacon', place:'land', w:2, h:2,")
-lines.append("    speed:0, energy:3.5, slots:2, radius:3, baseCost:{steelPlate:10,advancedCircuit:20,copperCable:10,electronicCircuit:20}, costMul:1.2, unlock:'modules',")
+lines.append(f"    name:'Beacon', icon:'❖', img:'{build_sprite('beacon') or ''}', color:'#2a6a8a', cat:'beacon', place:'land', w:3, h:3,")
+lines.append("    speed:0, energy:3.5, slots:2, radius:3, baseCost:{steelPlate:10,advancedCircuit:20,copperCable:10,electronicCircuit:20}, costMul:1.2, unlock:'effectTransmission',")
 lines.append("    recipes:[],")
 lines.append("  },")
 lines.append("};\n")
@@ -428,6 +548,47 @@ for c,keys in allcat.items():
     for k in keys:
         if k not in RES: errs.append(f"building cat {c}: recipe {k} missing from RESOURCES")
 print("INTEGRITY:", "OK" if not errs else ("\n  "+"\n  ".join(errs)))
+
+# ---- enemy (biter) animations --------------------------------------------
+# Factorio biters are rotated, multi-frame animations split across 4 huge sheets
+# (body + tint masks + shadow). We use the body layer only (it already reads as a
+# brown biter), and repack the frames we need into one compact, downscaled atlas
+# per animation: rows = direction, cols = frame. The renderer picks a cell by the
+# biter's facing direction and current frame. Layout per source: frame WxH, 8 cols,
+# 8 rows per file, direction-major order  (idx = dir*frame_count + frame).
+ENEMYDIR = os.path.join(ROOT, "assets/enemies"); os.makedirs(ENEMYDIR, exist_ok=True)
+BITER = os.path.join(GFX, "entity/biter")
+def biter_atlas(anim, frame_count, dirs, src_fw, src_fh, cols, rows_per_file, cw, ch):
+    if not Image: return None
+    files = [Image.open(os.path.join(BITER, f"biter-{anim}-{i}.png")).convert("RGBA") for i in (1, 2, 3, 4)]
+    per_file = cols * rows_per_file                             # frames per source sheet
+    atlas = Image.new("RGBA", (cw * frame_count, ch * dirs))
+    for d in range(dirs):
+        for f in range(frame_count):
+            idx = d * frame_count + f                           # direction-major sequential order
+            fi, loc = idx // per_file, idx % per_file
+            if fi >= len(files): continue
+            col, row = loc % cols, loc // cols
+            cell = files[fi].crop((col * src_fw, row * src_fh, col * src_fw + src_fw, row * src_fh + src_fh))
+            cell = cell.resize((cw, ch), Image.LANCZOS)
+            atlas.paste(cell, (f * cw, d * ch), cell)
+    atlas.save(os.path.join(ENEMYDIR, f"biter-{anim}.png"))
+    return f"assets/enemies/biter-{anim}.png"
+
+CW, CH = 56, 44                                                 # atlas cell (matches biter frame aspect)
+e_run = biter_atlas("run", 16, 16, 398, 310, 8, 8, CW, CH)
+e_atk = biter_atlas("attack", 11, 16, 356, 348, 11, 4, CW, CH) if os.path.exists(os.path.join(BITER, "biter-attack-1.png")) else None
+elines = ["// data/enemies.js — AUTO-GENERATED by tools/extract.py.",
+          "// Biter animation atlases (body layer, downscaled). rows = direction (16, N=0 clockwise),",
+          "// cols = frame. The map renderer plays these for wandering/attacking biters.",
+          "export const ENEMIES = {",
+          "  biter: {",
+          f"    run:    {{ img:'{e_run}', dirs:16, frames:16, cw:{CW}, ch:{CH}, fps:14 }},",
+          f"    attack: {{ img:'{e_atk}', dirs:16, frames:11, cw:{CW}, ch:{CH}, fps:11 }},",
+          "  },",
+          "};"]
+open(os.path.join(DATA, "enemies.js"), "w").write("\n".join(elines) + "\n")
+print("wrote enemies.js + biter atlases:", e_run, e_atk)
 
 # ---- terrain tiles + ore-on-ground sprites (for the map renderer) --------
 # Grass comes from a 4096×576 sheet of 64px tile variants; ore from per-ore
@@ -453,7 +614,12 @@ def _solid_cells(sheet, rrange, crange, keep=None):
                     continue
             out.append((c, r))
     return out
-def _build_atlas(sheet, cells, out_path, seed, N=8):
+# overlay a translucent solid colour to pull a biome toward a common, harmonious tone
+def _wash(img, color, alpha):
+    ov = Image.new("RGBA", img.size, (color[0], color[1], color[2], int(alpha * 255)))
+    return Image.alpha_composite(img.convert("RGBA"), ov)
+
+def _build_atlas(sheet, cells, out_path, seed, N=8, tint=None, wash=None):
     if not cells:
         print("atlas skipped (no cells):", out_path); return
     rnd = _random.Random(seed)
@@ -461,7 +627,10 @@ def _build_atlas(sheet, cells, out_path, seed, N=8):
     for gy in range(N):
         for gx in range(N):
             c, r = rnd.choice(cells)
-            atlas.paste(sheet.crop((c*64, r*64, c*64+64, r*64+64)), (gx*64, gy*64))
+            cell = sheet.crop((c*64, r*64, c*64+64, r*64+64))
+            atlas.paste(_tint(cell, tint) if tint else cell, (gx*64, gy*64))
+    if wash:
+        atlas = _wash(atlas, wash[0], wash[1])
     atlas.save(out_path)
 
 # multiply-tint an RGBA tile by (tr,tg,tb), clamped to 0..255 (used for foliage + desert)
@@ -475,46 +644,25 @@ def _tint(img, t):
 def extract_terrain():
     if not Image: return
     os.makedirs(TERRAINDIR, exist_ok=True)
-    # grass (lush green) + drygrass (olive, the grass→highland intermediate biome)
+    # Biomes use sources that are NATURALLY close in gamut (the dark end of the grass &
+    # dirt families) + a gentle darkening, so the whole world is a dim, cohesive earthy
+    # palette that blends together rather than contrasting.
+    def land(sheet, out, seed, keep=None):
+        try:
+            s = Image.open(os.path.join(GFX, "terrain/" + sheet)).convert("RGBA")
+            _build_atlas(s, _solid_cells(s, range(1, 9), range(2, 40), keep), os.path.join(TERRAINDIR, out), seed)
+        except Exception as e:
+            print(out, "failed:", e)
+    land("grass-2.png",      "grass-atlas.png",    0xA11, lambda R, G, B: G - (R + B) / 2 > 18)  # lush green cells
+    land("dirt-7.png",       "drygrass-atlas.png", 0xB22)   # dark khaki-brown
+    land("dirt-6.png",       "highland-atlas.png", 0xC33)   # dark brown
+    land("red-desert-0.png", "desert-atlas.png",   0xD44)   # dark reddish-brown
+    land("dry-dirt.png",     "sand-atlas.png",     0xE55)   # slightly lighter beach
+    # water: deep water darkened further for a moodier look
     try:
-        g = Image.open(os.path.join(GFX, "terrain/grass-1.png")).convert("RGBA")
-        green = _solid_cells(g, range(1, 9), range(2, 40), lambda R, G, B: G - (R + B) / 2 > 20)
-        olive = _solid_cells(g, range(1, 9), range(2, 40), lambda R, G, B: 8 <= G - (R + B) / 2 <= 19)
-        _build_atlas(g, green, os.path.join(TERRAINDIR, "grass-atlas.png"), 0xA11)
-        _build_atlas(g, olive, os.path.join(TERRAINDIR, "drygrass-atlas.png"), 0xB22)
-    except Exception as e:
-        print("grass atlas failed:", e)
-    # highland: rocky brown upland from dirt-4
-    try:
-        dd = Image.open(os.path.join(GFX, "terrain/dirt-4.png")).convert("RGBA")
-        _build_atlas(dd, _solid_cells(dd, range(1, 9), range(2, 40)), os.path.join(TERRAINDIR, "highland-atlas.png"), 0xC33)
-    except Exception as e:
-        print("highland atlas failed:", e)
-    # desert: red-desert pushed toward vivid orange
-    try:
-        rd = Image.open(os.path.join(GFX, "terrain/red-desert-3.png")).convert("RGBA")
-        cells = _solid_cells(rd, range(1, 9), range(2, 40))
-        if cells:
-            rnd = _random.Random(0xD44); a = Image.new("RGBA", (8 * 64, 8 * 64))
-            for gy in range(8):
-                for gx in range(8):
-                    c, r = rnd.choice(cells)
-                    a.paste(_tint(rd.crop((c*64, r*64, c*64+64, r*64+64)), (1.18, 0.92, 0.62)), (gx*64, gy*64))
-            a.save(os.path.join(TERRAINDIR, "desert-atlas.png"))
-    except Exception as e:
-        print("desert atlas failed:", e)
-    # sand atlas
-    try:
-        sd = Image.open(os.path.join(GFX, "terrain/sand-1.png")).convert("RGBA")
-        sand = _solid_cells(sd, range(2, 16), range(2, 40), lambda R, G, B: (R + G + B) / 3 > 110)
-        _build_atlas(sd, sand, os.path.join(TERRAINDIR, "sand-atlas.png"), 0xC33)
-    except Exception as e:
-        print("sand atlas failed:", e)
-    # water atlas (water1 is a single row of solid variants)
-    try:
-        w = Image.open(os.path.join(GFX, "terrain/water/water1.png")).convert("RGBA")
+        w = Image.open(os.path.join(GFX, "terrain/deepwater/deepwater1.png")).convert("RGBA")
         wcells = _solid_cells(w, range(0, w.height // 64), range(0, w.width // 64))
-        _build_atlas(w, wcells, os.path.join(TERRAINDIR, "water-atlas.png"), 0xD44)
+        _build_atlas(w, wcells, os.path.join(TERRAINDIR, "water-atlas.png"), 0xF66, tint=(0.62, 0.66, 0.7))
     except Exception as e:
         print("water atlas failed:", e)
     # ore clusters: 4 full cells per ore, keyed by the in-game resource key
@@ -538,33 +686,38 @@ def extract_terrain():
     print("wrote terrain tiles to assets/terrain/")
 extract_terrain()
 
-# ---- scatter decoratives (grass tufts, small rocks) ----------------------
-# Single transparent sprites (NOT mipmap strips) — copied as-is; sizes recorded
-# in js/data/decor.js so the renderer keeps each sprite's real aspect ratio.
+# ---- biome decoratives (grass tufts, dry bushes, desert shrubs) ----------
+# Single transparent sprites copied as-is, grouped by biome so each terrain gets
+# decoratives that match its palette. Sizes recorded for correct aspect at draw.
 import glob
-DECOR_SETS = ["green-small-grass","green-hairy-grass","green-bush-mini","small-rock","tiny-rock","medium-rock"]
+DECOR_BIOME = {
+    "grass":    ["green-small-grass", "green-hairy-grass", "green-bush-mini"],
+    "drygrass": ["brown-hairy-grass", "brown-fluff-dry", "garballo"],
+    "desert":   ["red-desert-bush", "red-croton", "garballo-mini-dry"],
+}
 def extract_decor():
     if not Image: return
     ddir = os.path.join(ROOT, "assets/decor"); os.makedirs(ddir, exist_ok=True)
-    out = []
-    for d in DECOR_SETS:
-        files = sorted(glob.glob(os.path.join(GFX, "decorative", d, "*.png")))[:3]
-        for i, f in enumerate(files):
-            try:
-                im = Image.open(f)
-                dst = f"decor-{d}-{i}.png"
-                im.save(os.path.join(ddir, dst))
-                out.append((f"assets/decor/{dst}", im.width, im.height))
-            except Exception as e:
-                print(f"decor failed ({d}):", e)
-    body = ["// data/decor.js — AUTO-GENERATED by tools/extract.py. Map terrain decoratives.",
-            "// {src, w, h} — w/h are the sprite's native pixel size (≈64px per tile) for aspect.",
-            "export const DECOR = ["]
-    for (src, w, h) in out:
-        body.append(f"  {{src:'{src}', w:{w}, h:{h}}},")
-    body.append("];\n")
+    groups = {}
+    for biome, sets in DECOR_BIOME.items():
+        out = []
+        for d in sets:
+            for i, f in enumerate(sorted(glob.glob(os.path.join(GFX, "decorative", d, "*.png")))[:3]):
+                try:
+                    im = Image.open(f); dst = f"decor-{biome}-{d}-{i}.png"
+                    im.save(os.path.join(ddir, dst))
+                    out.append((f"assets/decor/{dst}", im.width, im.height))
+                except Exception as e:
+                    print(f"decor failed ({d}):", e)
+        groups[biome] = out
+    body = ["// data/decor.js — AUTO-GENERATED by tools/extract.py. Per-biome decoratives.",
+            "// DECOR[biome] = [{src,w,h}] — w/h are native px (≈64/tile) for aspect.",
+            "export const DECOR = {"]
+    for biome, out in groups.items():
+        body.append(f"  {biome}: [" + ", ".join(f"{{src:'{s}',w:{w},h:{h}}}" for (s, w, h) in out) + "],")
+    body.append("};\n")
     open(os.path.join(ROOT, "js/data/decor.js"), "w").write("\n".join(body))
-    print("wrote", len(out), "decoratives + js/data/decor.js")
+    print("wrote decoratives for", list(groups), "+ js/data/decor.js")
 extract_decor()
 
 # ---- obstacles: trees (composited) + boulders (rocks) --------------------
@@ -590,31 +743,51 @@ def _compose_tree(tnum, var):
     c.alpha_composite(leaf, ((W - leaf.width) // 2, CH - trunk.height - int(leaf.height * 0.55)))
     bb = c.getbbox()
     return c.crop(bb) if bb else c
+# dead/dry trees for the other biomes are SINGLE sprites (no leaf layer); copied as-is.
+# Each tree TYPE is biome-specific; rocks are shared across every biome.
+DRY_TREES = {
+    "tree-drygrass": ["dry-hairy-tree/dry-hairy-tree-00", "dry-hairy-tree/dry-hairy-tree-02", "dry-hairy-tree/dry-hairy-tree-04"],
+    "tree-desert":   ["dead-tree-desert/dead-tree-desert-00", "dead-tree-desert/dead-tree-desert-02", "dry-tree/dry-tree-00", "dry-tree/dry-tree-02"],
+    "tree-highland": ["dead-grey-trunk/dead-grey-trunk-00", "dead-grey-trunk/dead-grey-trunk-02", "dead-grey-trunk/dead-grey-trunk-04"],
+}
 def extract_obstacles():
     if not Image: return
     odir = os.path.join(ROOT, "assets/obstacles"); os.makedirs(odir, exist_ok=True)
-    trees, rocks = [], []
+    def save(im, dst): im.save(os.path.join(odir, dst)); return (f"assets/obstacles/{dst}", im.width, im.height)
+    types = {}                       # obstacle type key -> list of (src,w,h)
+    # grass: composited green trees
+    g = []
     for i, (tn, v) in enumerate(TREE_PICKS):
-        try:
-            im = _compose_tree(tn, v); dst = f"tree-{i}.png"
-            im.save(os.path.join(odir, dst)); trees.append((f"assets/obstacles/{dst}", im.width, im.height))
+        try: g.append(save(_compose_tree(tn, v), f"tree-grass-{i}.png"))
         except Exception as e: print(f"tree {tn}-{v} failed:", e)
+    types["tree-grass"] = g
+    # dry/dead biome trees (single sprites)
+    for key, rels in DRY_TREES.items():
+        lst = []
+        for i, rel in enumerate(rels):
+            try: lst.append(save(Image.open(os.path.join(GFX, "entity/tree", rel + ".png")).convert("RGBA"), f"{key}-{i}.png"))
+            except Exception as e: print(f"{key} {rel} failed:", e)
+        types[key] = lst
+    # rocks (any biome)
+    rocks = []
     for i, rel in enumerate(ROCK_PICKS):
-        try:
-            im = Image.open(os.path.join(GFX, "decorative", rel + ".png")).convert("RGBA")
-            dst = f"rock-{i}.png"; im.save(os.path.join(odir, dst))
-            rocks.append((f"assets/obstacles/{dst}", im.width, im.height))
+        try: rocks.append(save(Image.open(os.path.join(GFX, "decorative", rel + ".png")).convert("RGBA"), f"rock-{i}.png"))
         except Exception as e: print(f"rock {rel} failed:", e)
+    types["rock"] = rocks
     def arr(items): return "[" + ", ".join(f"{{src:'{s}',w:{w},h:{h}}}" for (s, w, h) in items) + "]"
+    YIELD = {"tree-grass": "{wood:2}", "tree-drygrass": "{wood:1}", "tree-desert": "{wood:1}",
+             "tree-highland": "{wood:1}", "rock": "{stone:6,coal:3}"}
+    LABEL = {"rock": "Boulder"}
     js = ["// data/obstacles.js — AUTO-GENERATED by tools/extract.py.",
-          "// Map obstacles: clear them for resources; you cannot build on them.",
-          "// `yield` is granted once when an obstacle is cleared; sprites carry native size.",
-          "export const OBSTACLES = {",
-          f"  tree: {{ kind:'tree', label:'Tree', yield:{{wood:2}}, sprites:{arr(trees)} }},",
-          f"  rock: {{ kind:'rock', label:'Boulder', yield:{{stone:6,coal:3}}, sprites:{arr(rocks)} }},",
-          "};\n"]
+          "// Per-biome obstacles: clear them for resources; you cannot build on them.",
+          "// kind drives the i18n label; `yield` is granted once on clearing.",
+          "export const OBSTACLES = {"]
+    for key, items in types.items():
+        kind = "rock" if key == "rock" else "tree"
+        js.append(f"  '{key}': {{ kind:'{kind}', label:'{LABEL.get(key,'Tree')}', yield:{YIELD[key]}, sprites:{arr(items)} }},")
+    js.append("};\n")
     open(os.path.join(ROOT, "js/data/obstacles.js"), "w").write("\n".join(js))
-    print("wrote", len(trees), "trees +", len(rocks), "rocks + js/data/obstacles.js")
+    print("wrote obstacles:", {k: len(v) for k, v in types.items()})
 extract_obstacles()
 
 # ---- crop any remaining mipmap strips in assets/icons (idempotent) -------
@@ -629,3 +802,118 @@ if Image:
                     im.crop((0, 0, im.height, im.height)).save(p); fixed += 1
             except Exception: pass
     print("cropped mipmap strips:", fixed)
+
+# ============================================================================
+# Full technology tree (real dependency graph) + recipe→tech gating
+# ============================================================================
+tech_txt = read("technology.lua")
+def _list_strs(s):
+    return re.findall(r'"([^"]+)"', s) if s else []
+def _between(blk, key):
+    m = re.search(rf'\b{key}\s*=\s*\{{', blk)
+    if not m: return None
+    i = m.end() - 1; depth = 0; j = i
+    while j < len(blk):
+        if blk[j] == '{': depth += 1
+        elif blk[j] == '}':
+            depth -= 1
+            if depth == 0: break
+        j += 1
+    return blk[i:j+1]
+
+TECHS = {}            # name -> {prereqs, cost{sciKey:n}, recipes[], mods[], infinite}
+RECIPE_TECH = {}      # factorio recipe name -> first tech name that unlocks it
+TECH_ORDER = []
+for blk in blocks_with_type(tech_txt, "technology"):
+    name = field(blk, "name")
+    if not name: continue
+    pm = re.search(r'prerequisites\s*=\s*\{([^}]*)\}', blk)
+    prereqs = _list_strs(pm.group(1)) if pm else []
+    unit = _between(blk, "unit") or ""
+    infinite = "count_formula" in unit
+    cm = re.search(r'count\s*=\s*(\d+)', unit)
+    count = int(cm.group(1)) if cm else 0
+    ing = _between(unit, "ingredients") or ""
+    cost = {}
+    for pk, n in re.findall(r'\{\s*"([^"]+)"\s*,\s*(\d+)\s*\}', ing):
+        cost[key(pk)] = cost.get(key(pk), 0) + count * int(n)
+    eff = _between(blk, "effects") or ""
+    recipes = re.findall(r'recipe\s*=\s*"([^"]+)"', eff)
+    mods = re.findall(r'type\s*=\s*"([a-z-]+)"', eff)
+    TECHS[name] = {"prereqs": prereqs, "cost": cost, "recipes": recipes, "mods": mods, "infinite": infinite}
+    TECH_ORDER.append(name)
+    for rc in recipes:
+        RECIPE_TECH.setdefault(rc, name)
+
+# finite, reachable techs only (skip infinite upgrade techs)
+TKEEP = {n for n in TECH_ORDER if not TECHS[n]["infinite"]}
+
+# attach `tech` to our recipes (camel-keyed). Oil/fluid overrides get a sensible tech.
+FLUID_TECH = {"petroleumGas":"oil-processing","heavyOil":"oil-processing","lightOil":"oil-processing",
+              "solidFuel":"oil-processing","sulfuricAcid":"sulfur-processing","lubricant":"lubricant"}
+for rname, tname in RECIPE_TECH.items():
+    ck = key(rname)
+    if ck in REC and tname in TKEEP:
+        REC[ck]["tech"] = key(tname)
+for ck, tname in FLUID_TECH.items():
+    if ck in REC and tname in TKEEP:
+        REC[ck]["tech"] = key(tname)
+emit_recipes()      # re-emit with tech gating
+
+# tier = longest path from a root through prerequisites (only kept techs)
+_tier_memo = {}
+def _tier(n):
+    if n in _tier_memo: return _tier_memo[n]
+    _tier_memo[n] = 1
+    reqs = [p for p in TECHS[n]["prereqs"] if p in TKEEP]
+    t = 1 + (max((_tier(p) for p in reqs), default=0))
+    _tier_memo[n] = t
+    return t
+
+def _effect(name, info):
+    e = {}
+    if name == "modules": e["unlockModules"] = True
+    if name == "rocket-silo": e["unlockRocket"] = True
+    if any("mining" in m and "productivity" in m for m in info["mods"]): e["globalYield"] = 0.05
+    if any(m == "laboratory-speed" for m in info["mods"]): e["globalSpeed"] = 0.05
+    return e
+
+def _name(n): return " ".join(w.capitalize() for w in n.split("-"))
+def _desc(name, info):
+    recs = [r for r in dict.fromkeys(info["recipes"]) if not r.endswith("-barrel")]
+    if recs:
+        names = [_name(r) for r in recs[:6]]
+        extra = len(recs) - 6
+        d = "Unlocks: " + ", ".join(names) + (f" +{extra} more" if extra > 0 else "")
+    elif any("mining" in m and "productivity" in m for m in info["mods"]):
+        d = "Bonus: +mining productivity"
+    elif any(m == "laboratory-speed" for m in info["mods"]):
+        d = "Bonus: +research speed"
+    elif name == "modules":
+        d = "Unlocks module slots in machines"
+    elif name == "rocket-silo":
+        d = "Unlocks the rocket silo — launch to prestige"
+    elif info["mods"]:
+        d = "Bonus: combat / equipment upgrade"
+    else:
+        d = ""
+    return d.replace("\\", "").replace("'", "\\'")
+rows = sorted(TKEEP, key=lambda n: (_tier(n), n))
+tlines = ["// data/tech.js — AUTO-GENERATED from Factorio technology.lua by tools/extract.py.",
+          "// Full dependency graph; cost = science packs (count×qty); recipes are gated via",
+          "// the `tech` field in recipes.js. effect: unlockModules/unlockRocket/global bonuses.",
+          "export const TECH = {"]
+for n in rows:
+    info = TECHS[n]
+    req = [key(p) for p in info["prereqs"] if p in TKEEP]
+    cost = info["cost"]
+    eff = _effect(n, info)
+    costjs = "{" + ",".join(f"{k}:{v}" for k, v in cost.items()) + "}"
+    reqjs = "[" + ",".join(f"'{r}'" for r in req) + "]"
+    effjs = "{" + ",".join(f"{k}:{('true' if v is True else v)}" for k, v in eff.items()) + "}"
+    tlines.append(f"  {key(n)}: {{name:'{_name(n)}', tier:{_tier(n)}, icon:'🔬', "
+                  f"cost:{costjs}, req:{reqjs}, desc:'{_desc(n, info)}', effect:{effjs}}},")
+tlines.append("};\n")
+open(os.path.join(DATA, "tech.js"), "w").write("\n".join(tlines))
+print("wrote tech.js:", len(rows), "technologies; recipe→tech gated:",
+      sum(1 for k in REC if REC[k].get("tech")))

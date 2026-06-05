@@ -1,5 +1,6 @@
 // gameState.js — owns the mutable game state and derived helpers.
 import { RESOURCES } from './data/resources.js';
+import { RECIPES }   from './data/recipes.js';
 import { BUILDINGS } from './data/buildings.js';
 import { POWER }     from './data/power.js';
 import { TECH }      from './data/tech.js';
@@ -14,7 +15,7 @@ export const GameState = {
   // build a brand-new state object (with a freshly generated map)
   fresh() {
     const s = {
-      version: 2,
+      version: 4,
       launches: 0,
       launchBonus: 1,
       resources: {},
@@ -43,10 +44,26 @@ export const GameState = {
     s.resources.stone = 10;
     this.state = s;
     this.nextId = 1;
+    this.setupWarScreen(s);
     return s;
   },
 
+  // initial war-screen layout: a one-tile-thick wall across the top of the war screen
+  // and a single gun turret centred just behind it, pre-loaded with 20 ammo magazines.
+  setupWarScreen(s) {
+    const wallY = MapGen.wallRow();
+    for (let x = 0; x < s.map.width; x++)
+      s.entities.push({ id: this.nextId++, type: 'stoneWall', x, y: wallY, recipe: null, modules: [] });
+    const tx = Math.floor(s.map.width / 2) - 1;
+    s.entities.push({ id: this.nextId++, type: 'gunTurret', x: tx, y: wallY + 1, recipe: null, modules: [], ammo: 20 });
+  },
+
   def(type)  { return BUILDINGS[type] || POWER[type]; },        // unified building/generator lookup
+  // a recipe is craftable once its unlocking technology is researched (none ⇒ from start)
+  recipeUnlocked(rk) {
+    const r = RECIPES[rk];
+    return !r || !r.tech || this.state.research.done.includes(r.tech);
+  },
   placedOf(type) { return this.state.entities.filter(e => e.type === type).length; },
 
   // an uncleared obstacle (tree/rock) at this tile, or null
@@ -57,7 +74,8 @@ export const GameState = {
 
   // is the footprint at (x,y) free of other entities AND obstacles? (2×2 default)
   free(x, y, w = 2, h = 2, ignore = null) {
-    if (y < 0 || y + h > this.state.map.height || x < 0) return false;
+    // y may be negative on the war screen; zone/placement rules are enforced by the caller
+    if (x < 0 || x + w > this.state.map.width) return false;
     for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) {
       if (this.obstacleAt(x + dx, y + dy)) return false;            // can't build on trees/rocks
       if (MapGen.waterAt(this.state.map, x + dx, y + dy)) return false;  // can't build on water
@@ -100,6 +118,31 @@ export const GameState = {
     return { speed, yield: yld * this.state.launchBonus };
   },
 
+  // number of same-type entities whose footprint shares an edge with `ent` (nuclear neighbors)
+  adjacentSameType(ent) {
+    const d = this.def(ent.type); if (!d) return 0;
+    const w = d.w || 2, h = d.h || 2;
+    const ax1 = ent.x, ax2 = ent.x + w, ay1 = ent.y, ay2 = ent.y + h;
+    let c = 0;
+    for (const o of this.state.entities) {
+      if (o === ent || o.id === ent.id || o.type !== ent.type) continue;
+      const od = this.def(o.type); const ow = od.w || 2, oh = od.h || 2;
+      const bx1 = o.x, bx2 = o.x + ow, by1 = o.y, by2 = o.y + oh;
+      const edgeX = (ax2 === bx1 || bx2 === ax1) && Math.max(ay1, by1) < Math.min(ay2, by2);
+      const edgeY = (ay2 === by1 || by2 === ay1) && Math.max(ax1, bx1) < Math.min(ax2, bx2);
+      if (edgeX || edgeY) c++;
+    }
+    return c;
+  },
+
+  // total research throughput from all placed labs (× lab speed, beacons, research techs)
+  labSpeed() {
+    const labDef = BUILDINGS.lab; if (!labDef) return 0;
+    let sum = 0;
+    for (const e of this.state.entities)
+      if (e.type === 'lab') sum += labDef.speed * (1 + this.beaconSpeedAt(e.x, e.y));
+    return sum * this.multipliers().speed;
+  },
   isBuildingUnlocked(key) {
     const u = BUILDINGS[key].unlock;
     if (!u) return true;

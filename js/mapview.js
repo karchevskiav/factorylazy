@@ -9,17 +9,20 @@ import { DECOR }     from './data/decor.js';
 import { OBSTACLES } from './data/obstacles.js';
 import { MapGen }    from './map.js';
 import { I18N }      from './i18n.js';
+import { ENEMIES }   from './data/enemies.js';
+import { Biters }    from './biters.js';
 
-const TILE = 42;
+let TILE = 22;              // tile size in px — recomputed in resize() so the full width fits
 const GRASS = ['#3a4a2e', '#3f5031', '#445635'];
 
 export const MapView = {
   canvas: null, ctx: null,
-  camPx: 0,                 // horizontal camera offset in pixels
+  mode: 'factory',          // 'factory' (y≥0) or 'war' (the war screen above, y<0)
+  camPy: 0,                 // vertical camera offset in pixels (world scrolls top→bottom)
   place: null,              // building/generator type being placed, or null
   selected: null,          // selected entity, or null
   hover: { x: -99, y: -99, inside: false },
-  drag: null,              // {startX, startCam} while panning
+  drag: null,              // {startY, startCam} while panning
   imgs: {},                // path -> HTMLImageElement
   mining: false,           // hold-to-mine ore by hand
   mineRAF: null, mineLastTs: 0, mineAccum: 0,
@@ -33,6 +36,49 @@ export const MapView = {
     window.addEventListener('resize', () => this.resize());
     this.preload();
     this.bind();
+    this.startCritters();
+  },
+
+  // persistent animation loop driving the biters (and any future live actors)
+  critterRAF: null, critterTs: 0,
+  startCritters() {
+    if (this.critterRAF) return;
+    this.critterTs = performance.now();
+    const loop = (ts) => {
+      const dt = Math.min(0.1, (ts - this.critterTs) / 1000);
+      this.critterTs = ts;
+      const visible = this.canvas && this.canvas.offsetParent !== null;
+      if (visible && GameState.state && GameState.state.map && !this.mining) {
+        Biters.update(dt);
+        this.render();
+      }
+      this.critterRAF = requestAnimationFrame(loop);
+    };
+    this.critterRAF = requestAnimationFrame(loop);
+  },
+  // current visible tile band (top/bottom rows, plus map width)
+  viewport() {
+    const H = this.canvas ? this.canvas.height : 600;
+    return { top: this.camPy / TILE, bottom: (this.camPy + H) / TILE, width: GameState.state.map.width };
+  },
+
+  /* ---------- war screen (the defensive front above the factory) ---------- */
+  toggleWar() { this.mode === 'war' ? this.gotoFactory() : this.gotoWar(); },
+  gotoWar() {
+    this.mode = 'war'; this.place = null; this.selected = null; window.UI.hideInspector();
+    // frame the front: a few rows of the biter zone, the wall, and the war ground below
+    this.camPy = (MapGen.wallRow() - 6) * TILE;
+    this.updateWarBtn(); window.UI.renderDynamic(); this.render();
+  },
+  gotoFactory() {
+    this.mode = 'factory'; this.place = null; this.selected = null; window.UI.hideInspector();
+    this.camPy = 0;
+    this.updateWarBtn(); window.UI.renderDynamic(); this.render();
+  },
+  updateWarBtn() {
+    const b = document.getElementById('war-btn'); if (!b) return;
+    b.textContent = this.mode === 'war' ? I18N.t('war_to_factory') : I18N.t('war_to_front');
+    b.classList.toggle('accent', this.mode === 'war');
   },
 
   terr: {},                 // terrain texture cache (grass + ore-on-ground sprites)
@@ -45,8 +91,9 @@ export const MapView = {
     for (const t of ['grass', 'water', 'sand', 'highland', 'drygrass', 'desert']) addT(t + '-atlas');
     for (const o of ['ironOre', 'copperOre', 'coal', 'stone', 'uraniumOre', 'crudeOil'])
       for (let i = 0; i < 4; i++) addT('ore-' + o + '-' + i);
-    for (const d of DECOR) add(d.src);
+    for (const b in DECOR) for (const d of DECOR[b]) add(d.src);
     for (const k in OBSTACLES) for (const sp of OBSTACLES[k].sprites) add(sp.src);
+    for (const k in ENEMIES) { add(ENEMIES[k].run.img); add(ENEMIES[k].attack.img); }
   },
   decorHash(x, y) {
     let h = (x * 374761393) ^ (y * 668265263) ^ ((GameState.state.map.seed || 0) | 0);
@@ -109,8 +156,11 @@ export const MapView = {
   resize() {
     if (!this.canvas) return;
     const wrap = this.canvas.parentElement;
-    this.canvas.width  = Math.max(320, wrap.clientWidth);
-    this.canvas.height = MapGen.HEIGHT * TILE;
+    // scale tiles so the full WIDTH always fits the available panel width (one screen)
+    TILE = Math.max(14, Math.floor((wrap.clientWidth || 880) / MapGen.WIDTH));
+    this.fades = {};                                         // cached fades are TILE-sized — rebuild
+    this.canvas.width  = MapGen.WIDTH * TILE;
+    this.canvas.height = Math.max(320, wrap.clientHeight || 560);
     this.render();
   },
 
@@ -122,14 +172,14 @@ export const MapView = {
       if (e.button === 0 && this.place === null && !ent && this.handMineable(t.x, t.y)) {
         this.startMining(); return;
       }
-      if (e.button === 1 || (e.button === 0 && this.place === null && !ent)) {
-        this.drag = { startX: e.clientX, startCam: this.camPx }; this.dragMoved = false;
+      if (this.mode === 'factory' && (e.button === 1 || (e.button === 0 && this.place === null && !ent))) {
+        this.drag = { startY: e.clientY, startCam: this.camPy }; this.dragMoved = false;
       }
     });
     window.addEventListener('mousemove', (e) => {
       if (this.drag) {
-        if (Math.abs(e.clientX - this.drag.startX) > 3) this.dragMoved = true;
-        this.camPx = Math.max(0, this.drag.startCam - (e.clientX - this.drag.startX)); this.render(); return;
+        if (Math.abs(e.clientY - this.drag.startY) > 3) this.dragMoved = true;
+        this.camPy = Math.max(0, this.drag.startCam - (e.clientY - this.drag.startY)); this.render(); return;
       }
     });
     window.addEventListener('mouseup', () => { this.drag = null; this.stopMining(); });
@@ -151,14 +201,17 @@ export const MapView = {
       else this.place = null;          // right-click also cancels placement
       this.render();
     });
-    c.addEventListener('wheel', (e) => { e.preventDefault(); this.camPx = Math.max(0, this.camPx + e.deltaY); this.render(); }, { passive: false });
+    c.addEventListener('wheel', (e) => {
+      if (this.mode === 'war') return;                  // war screen is a fixed view
+      e.preventDefault(); this.camPy = Math.max(0, this.camPy + e.deltaY); this.render();
+    }, { passive: false });
   },
 
   /* ---------- coordinate helpers ---------- */
   toTile(e) {
     const r = this.canvas.getBoundingClientRect();
-    return { x: Math.floor((e.clientX - r.left + this.camPx) / TILE),
-             y: Math.floor((e.clientY - r.top) / TILE) };
+    return { x: Math.floor((e.clientX - r.left) / TILE),
+             y: Math.floor((e.clientY - r.top + this.camPy) / TILE) };
   },
   entityAt(x, y) {
     return GameState.state.entities.find(en => {
@@ -170,35 +223,31 @@ export const MapView = {
   /* ---------- placement / selection ---------- */
   setPlace(type) { this.place = type; this.selected = null; window.UI.hideInspector(); this.render(); },
 
-  oreUnder(x, y) {           // any drill-mineable ore under the 2×2 footprint (not oil)
-    for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 2; dy++) {
+  foot(type) { const d = GameState.def(type); return [d && d.w || 2, d && d.h || 2]; },
+  oreUnder(x, y, w = 2, h = 2) {   // any drill-mineable ore under the footprint (not oil)
+    for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) {
       const o = MapGen.oreAt(GameState.state.map, x + dx, y + dy);
       if (o && o !== 'crudeOil') return o;
     }
     return null;
   },
-
-  oresUnder(x, y) {          // every distinct drill-mineable ore under the footprint
-    const out = [];
-    for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 2; dy++) {
-      const o = MapGen.oreAt(GameState.state.map, x + dx, y + dy);
-      if (o && o !== 'crudeOil' && !out.includes(o)) out.push(o);
-    }
-    return out;
-  },
-
-  oilUnder(x, y) {           // true if any crude-oil tile is under the 2×2 footprint
-    for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 2; dy++) {
+  oilUnder(x, y, w = 2, h = 2) {   // true if any crude-oil tile is under the footprint
+    for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) {
       if (MapGen.oreAt(GameState.state.map, x + dx, y + dy) === 'crudeOil') return true;
     }
     return false;
   },
 
   valid(type, x, y) {
-    if (!GameState.free(x, y, 2, 2)) return false;
+    const [w, h] = this.foot(type);
     const def = GameState.def(type);
-    if (def.place === 'ore') return !!this.oreUnder(x, y);
-    if (def.place === 'oil') return this.oilUnder(x, y);
+    // zone rules: military buildings only on the war screen [wallRow, 0); everything else
+    // only on the factory (y ≥ 0). Nothing may be built in the biter zone.
+    if (def.military) { if (y < MapGen.wallRow() || y + h > 0) return false; }
+    else if (y < 0) return false;
+    if (!GameState.free(x, y, w, h)) return false;
+    if (def.place === 'ore') return !!this.oreUnder(x, y, w, h);
+    if (def.place === 'oil') return this.oilUnder(x, y, w, h);
     return true;
   },
 
@@ -219,8 +268,9 @@ export const MapView = {
     window.UI.pay(cost);
 
     let recipe = null;
-    if (def.place === 'ore')      recipe = this.oreUnder(x, y);          // drill ⇒ ore beneath
-    else if (def.recipes && def.recipes.length) recipe = def.recipes[0]; // default recipe
+    if (def.place === 'ore')      recipe = this.oreUnder(x, y, def.w || 2, def.h || 2);   // drill ⇒ ore beneath
+    else if (def.recipes && def.recipes.length)                          // default to first unlocked recipe
+      recipe = def.recipes.find(r => GameState.recipeUnlocked(r)) || def.recipes[0];
     GameState.state.entities.push({ id: GameState.nextId++, type, x, y, recipe, modules: [], _progress: 0 });
     window.UI.renderDynamic();
     this.render();
@@ -288,17 +338,32 @@ export const MapView = {
     return im && im.complete && im.naturalWidth;
   },
 
+  // sparse biome decoratives (grass tufts / dry bushes / desert shrubs) on plain tiles
+  scatterDecor(biome, x, y, sx, sy) {
+    const list = DECOR[biome]; if (!list || !list.length) return;
+    if (MapGen.oreAt(GameState.state.map, x, y)) return;
+    const hh = this.decorHash(x, y);
+    if (hh % 100 >= 15) return;
+    const d = list[(hh >>> 7) % list.length], im = this.imgs[d.src];
+    if (!im || !im.complete || !im.naturalWidth) return;
+    const w = d.w * TILE / 128, h = d.h * TILE / 128;
+    const ox = ((hh >>> 11) % 100) / 100 * Math.max(0, TILE - w);
+    const oy = ((hh >>> 18) % 100) / 100 * Math.max(0, TILE - h);
+    this.ctx.drawImage(im, sx + ox, sy + oy, w, h);
+  },
+
   // draw a tree/boulder anchored at the bottom-centre of its tile (trees overhang up).
   // A single pixels→tile scale per kind is applied to BOTH dimensions, so every sprite
   // keeps its true aspect ratio and species differ in size naturally (no stretching).
   OB_SCALE: { tree: 1 / 155, rock: 1 / 150 },   // tiles per source pixel
   drawObstacle(x, y) {
     const ob = GameState.obstacleAt(x, y); if (!ob) return;
-    const def = OBSTACLES[ob.kind]; const sp = def.sprites[ob.variant % def.sprites.length];
+    const def = OBSTACLES[ob.type]; if (!def || !def.sprites.length) return;
+    const sp = def.sprites[ob.variant % def.sprites.length];
     const im = this.imgs[sp.src]; if (!im || !im.complete || !im.naturalWidth) return;
     const k = TILE * (this.OB_SCALE[ob.kind] || 1 / 150);
     const w = sp.w * k, h = sp.h * k;
-    const dx = x * TILE - this.camPx + (TILE - w) / 2, dy = y * TILE + TILE - h;
+    const dx = x * TILE + (TILE - w) / 2, dy = y * TILE + TILE - h - this.camPy;
     this.ctx.drawImage(im, dx, dy, w, h);
   },
 
@@ -306,7 +371,7 @@ export const MapView = {
   clearObstacle(x, y) {
     const ob = GameState.obstacleAt(x, y); if (!ob) return;
     GameState.state.cleared[x + ',' + y] = 1;
-    const def = OBSTACLES[ob.kind], s = GameState.state;
+    const def = OBSTACLES[ob.type], s = GameState.state;
     const parts = [];
     for (const r in def.yield) {
       s.resources[r] = (s.resources[r] || 0) + def.yield[r];
@@ -320,13 +385,14 @@ export const MapView = {
   render() {
     const ctx = this.ctx; if (!ctx) return;
     const s = GameState.state; if (!s || !s.map) return;
-    const W = this.canvas.width, H = this.canvas.height;
-    const c0 = Math.floor(this.camPx / TILE), c1 = c0 + Math.ceil(W / TILE) + 1;
+    const H = this.canvas.height;
+    const r0 = Math.floor(this.camPy / TILE), r1 = r0 + Math.ceil(H / TILE) + 1;
+    const WCOLS = s.map.width;
 
     // terrain pass: world-sampled seamless textures, sparse decoratives on plain grass
-    for (let x = c0; x < c1; x++) {
-      for (let y = 0; y < s.map.height; y++) {
-        const sx = x * TILE - this.camPx, sy = y * TILE;
+    for (let y = r0; y < r1; y++) {
+      for (let x = 0; x < WCOLS; x++) {
+        const sx = x * TILE, sy = y * TILE - this.camPy;
         if (MapGen.waterAt(s.map, x, y)) {                       // lakes
           if (!this.tileWorld('water', x, y, sx, sy)) { ctx.fillStyle = '#1c5a72'; ctx.fillRect(sx, sy, TILE, TILE); }
           continue;                                              // no decor on water
@@ -337,30 +403,18 @@ export const MapView = {
         }
         if (MapGen.desertAt(s.map, x, y)) {                      // orange desert biome
           if (!this.tileWorld('desert', x, y, sx, sy)) { ctx.fillStyle = '#bd6922'; ctx.fillRect(sx, sy, TILE, TILE); }
-          continue;
+          this.scatterDecor('desert', x, y, sx, sy); continue;
         }
         if (MapGen.drygrassAt(s.map, x, y)) {                    // intermediate dry-grass biome
           if (!this.tileWorld('drygrass', x, y, sx, sy)) { ctx.fillStyle = '#605227'; ctx.fillRect(sx, sy, TILE, TILE); }
-          continue;
+          this.scatterDecor('drygrass', x, y, sx, sy); continue;
         }
         if (MapGen.highlandAt(s.map, x, y)) {                    // brown highland
           if (!this.tileWorld('highland', x, y, sx, sy)) { ctx.fillStyle = '#6b4a2a'; ctx.fillRect(sx, sy, TILE, TILE); }
           continue;                                              // bare upland — no decor
         }
         if (!this.tileWorld('grass', x, y, sx, sy)) { ctx.fillStyle = GRASS[0]; ctx.fillRect(sx, sy, TILE, TILE); }
-        if (!MapGen.oreAt(s.map, x, y) && DECOR.length) {
-          // sparse decoratives on plain grass (HR sprites: 128px ≈ one tile)
-          const hh = this.decorHash(x, y);
-          if (hh % 100 < 16) {
-            const d = DECOR[(hh >>> 7) % DECOR.length], im = this.imgs[d.src];
-            if (im && im.complete && im.naturalWidth) {
-              const w = d.w * TILE / 128, h = d.h * TILE / 128;
-              const ox = ((hh >>> 11) % 100) / 100 * Math.max(0, TILE - w);
-              const oy = ((hh >>> 18) % 100) / 100 * Math.max(0, TILE - h);
-              ctx.drawImage(im, sx + ox, sy + oy, w, h);
-            }
-          }
-        }
+        this.scatterDecor('grass', x, y, sx, sy);
       }
     }
 
@@ -368,10 +422,10 @@ export const MapView = {
     // with an alpha fade, so water↔sand↔grass↔highland edges are smooth gradients, not
     // hard lines. Water is lowest, so sand dissolves softly into the shoreline.
     const PRIO = { water: -1, sand: 0, desert: 1, grass: 2, drygrass: 3, highland: 4 };
-    for (let x = c0; x < c1; x++) for (let y = 0; y < s.map.height; y++) {
+    for (let y = r0; y < r1; y++) for (let x = 0; x < WCOLS; x++) {
       const t = MapGen.terrainType(s.map, x, y);
       if (!(t in PRIO)) continue;
-      const sx = x * TILE - this.camPx, sy = y * TILE;
+      const sx = x * TILE, sy = y * TILE - this.camPy;
       for (const [dx, dy, dir] of [[0, -1, 'N'], [0, 1, 'S'], [-1, 0, 'W'], [1, 0, 'E'],
                                    [-1, -1, 'NW'], [1, -1, 'NE'], [-1, 1, 'SW'], [1, 1, 'SE']]) {
         const nt = MapGen.terrainType(s.map, x + dx, y + dy);
@@ -384,11 +438,11 @@ export const MapView = {
 
     // ore pass (after all grass so the slight overscan can feather onto neighbours)
     const OVER = 5;                       // px the ore sprite bleeds past its tile on each side
-    for (let x = c0; x < c1; x++) {
-      for (let y = 0; y < s.map.height; y++) {
+    for (let y = r0; y < r1; y++) {
+      for (let x = 0; x < WCOLS; x++) {
         const ore = MapGen.oreAt(s.map, x, y);
         if (!ore) continue;
-        const sx = x * TILE - this.camPx, sy = y * TILE;
+        const sx = x * TILE, sy = y * TILE - this.camPy;
         const oi = this.terr['ore-' + ore + '-' + this.oreVariant(x, y)];
         if (!this.drawn(oi, sx - OVER, sy - OVER, TILE + 2 * OVER)) {
           ctx.fillStyle = RESOURCES[ore].color; ctx.globalAlpha = 0.7; ctx.fillRect(sx, sy, TILE, TILE);
@@ -398,16 +452,21 @@ export const MapView = {
     }
 
     // obstacle pass: trees & boulders (ascending y so nearer ones overlap farther)
-    for (let y = 0; y < s.map.height; y++)
-      for (let x = c0; x < c1; x++) this.drawObstacle(x, y);
+    for (let y = r0; y < r1; y++)
+      for (let x = 0; x < WCOLS; x++) this.drawObstacle(x, y);
 
     // entities
     for (const e of s.entities) {
       const d = GameState.def(e.type), w = (d.w || 2) * TILE, h = (d.h || 2) * TILE;
-      const sx = e.x * TILE - this.camPx, sy = e.y * TILE;
-      if (sx + w < 0 || sx > W) continue;
-      ctx.fillStyle = 'rgba(20,20,20,0.55)'; ctx.fillRect(sx, sy, w, h);
-      if (!this.sprite(d.img, sx + 2, sy + 2, w - 4)) {
+      const sx = e.x * TILE, sy = e.y * TILE - this.camPy;
+      if (sy + h < 0 || sy > H) continue;
+      // real entity sprite, scaled to the footprint width with its own aspect ratio,
+      // anchored at the footprint's bottom (taller machines overhang upward)
+      const im = this.imgs[d.img];
+      if (im && im.complete && im.naturalWidth) {
+        const dw = w, dh = w * (im.naturalHeight / im.naturalWidth);
+        ctx.drawImage(im, sx, sy + h - dh, dw, dh);
+      } else {
         ctx.fillStyle = d.color || '#555'; ctx.fillRect(sx + 2, sy + 2, w - 4, h - 4);
         ctx.fillStyle = '#fff'; ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(d.icon || '?', sx + w / 2, sy + h / 2);
@@ -421,24 +480,34 @@ export const MapView = {
       if (this.selected === e) { ctx.strokeStyle = '#7fd6ff'; ctx.lineWidth = 2; ctx.strokeRect(sx + 1, sy + 1, w - 2, h - 2); ctx.lineWidth = 1; }
     }
 
+    // biters (wandering / attacking — no gameplay effect yet)
+    this.drawBiters();
+
     // beacon radius for selected beacon
     if (this.selected && this.selected.type === 'beacon') this.drawRadius(this.selected.x, this.selected.y, BUILDINGS.beacon.radius);
 
-    // placement ghost
+    // placement ghost (real footprint)
     if (this.place && this.hover.inside) {
-      const x = this.hover.x, y = Math.min(this.hover.y, s.map.height - 2);
-      const sx = x * TILE - this.camPx, sy = y * TILE, sz = 2 * TILE;
+      const d = GameState.def(this.place), fw = d.w || 2, fh = d.h || 2;
+      const x = Math.max(0, Math.min(this.hover.x, s.map.width - fw));
+      const y = d.military ? Math.max(MapGen.wallRow(), Math.min(this.hover.y, -fh)) : Math.max(0, this.hover.y);
+      const sx = x * TILE, sy = y * TILE - this.camPy, w = fw * TILE, h = fh * TILE;
       const ok = this.valid(this.place, x, y);
-      const d = GameState.def(this.place);
       if (d.radius) this.drawRadius(x, y, d.radius);
-      ctx.globalAlpha = 0.55; this.sprite(d.img, sx + 2, sy + 2, sz - 4); ctx.globalAlpha = 1;
+      const im = this.imgs[d.img];
+      ctx.globalAlpha = 0.55;
+      if (im && im.complete && im.naturalWidth) {
+        const dh = w * (im.naturalHeight / im.naturalWidth);
+        ctx.drawImage(im, sx, sy + h - dh, w, dh);
+      }
+      ctx.globalAlpha = 1;
       ctx.strokeStyle = ok ? '#5fe06a' : '#e05a5a'; ctx.lineWidth = 2;
-      ctx.strokeRect(sx + 1, sy + 1, sz - 2, sz - 2); ctx.lineWidth = 1;
+      ctx.strokeRect(sx + 1, sy + 1, w - 2, h - 2); ctx.lineWidth = 1;
     }
 
     // hand-mining: a swinging pickaxe on the hovered ore tile
     if (this.mining && this.hover.inside) {
-      const sx = this.hover.x * TILE - this.camPx, sy = this.hover.y * TILE;
+      const sx = this.hover.x * TILE, sy = this.hover.y * TILE - this.camPy;
       ctx.strokeStyle = '#ffcf3f'; ctx.lineWidth = 2;
       ctx.strokeRect(sx + 1, sy + 1, TILE - 2, TILE - 2); ctx.lineWidth = 1;
       const ang = Math.sin(performance.now() / 80) * 0.6 - 0.3;
@@ -451,13 +520,33 @@ export const MapView = {
     }
   },
 
+  BITER_SCALE: 1.6,                          // biter size relative to a tile
+  drawBiters() {
+    const ctx = this.ctx, H = this.canvas.height;
+    const scale = this.BITER_SCALE;
+    for (const b of Biters.list) {
+      const anim = ENEMIES.biter[b.state]; if (!anim) continue;
+      const im = this.imgs[anim.img]; if (!im || !im.complete || !im.naturalWidth) continue;
+      const bw = scale * TILE, bh = bw * (anim.ch / anim.cw);
+      const px = b.x * TILE - bw / 2, py = b.y * TILE - this.camPy - bh / 2;
+      if (py + bh < 0 || py > H) continue;
+      const fr = Math.floor(b.frame) % anim.frames;
+      // soft contact shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.beginPath();
+      ctx.ellipse(px + bw / 2, py + bh * 0.74, bw * 0.30, bh * 0.15, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.drawImage(im, fr * anim.cw, b.dir * anim.ch, anim.cw, anim.ch, px, py, bw, bh);
+    }
+  },
+
   drawRadius(x, y, R) {
     const ctx = this.ctx;
-    const sx = (x - R) * TILE - this.camPx, sy = Math.max(0, (y - R)) * TILE;
+    const sx = (x - R) * TILE, sy = (y - R) * TILE - this.camPy;
     const sz = (2 + 2 * R) * TILE;
     ctx.fillStyle = 'rgba(127,214,255,0.10)';
-    ctx.fillRect(sx, sy, sz, Math.min(sz, this.canvas.height - sy));
+    ctx.fillRect(sx, sy, sz, sz);
     ctx.strokeStyle = 'rgba(127,214,255,0.45)';
-    ctx.strokeRect(sx + 0.5, sy + 0.5, sz, Math.min(sz, this.canvas.height - sy));
+    ctx.strokeRect(sx + 0.5, sy + 0.5, sz, sz);
   },
 };

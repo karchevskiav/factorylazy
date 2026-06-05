@@ -1,14 +1,12 @@
 // map.js — MapGen: procedural world generator.
-// The world is infinite in width (any x ≥ 0) and HEIGHT tiles tall. The four
-// starting ore patches (one of every type) are pre-seeded near spawn as organic
-// blobs; everywhere past the starting screen, ore is computed on demand from
-// smooth value-noise at a uniform density and blob size (same at any distance),
-// with rare resources (oil from screen 3, uranium from screen 5) joining the mix.
-// A new seed each game ⇒ a new layout; only the seed is stored in the save, so
-// the whole world is regenerated deterministically on load. Ore is infinite —
-// mining never depletes a tile, so no per-tile state needs persisting.
+// The world is WIDTH tiles wide (x ∈ [0, WIDTH)) and INFINITE downward (any y ≥ 0):
+// you start at the top and expand south. The four starting ore patches (one of every
+// type) are pre-seeded near spawn as organic blobs; deeper down, ore is computed on
+// demand from smooth value-noise, with rare resources (oil from screen 3, uranium from
+// screen 5) joining the mix. A new seed each game ⇒ a new layout; only the seed is
+// stored in the save, so the whole world is regenerated deterministically on load.
 
-export const MAP_HEIGHT = 20;
+export const MAP_WIDTH = 40;
 
 // deterministic PRNG (mulberry32) — same seed ⇒ same sequence
 function rng(seed) {
@@ -22,32 +20,41 @@ function rng(seed) {
 }
 
 export const MapGen = {
-  HEIGHT: MAP_HEIGHT,
+  WIDTH: MAP_WIDTH,
   ORES: ['ironOre', 'coal', 'copperOre', 'stone'],
-  START_W: 40,              // columns [0, START_W) are the hand-authored starting region
-  SCREEN: 40,               // one "screen" of columns; screen 1 = the starting region
-  OIL_SCREEN: 3,            // crude oil starts appearing from this screen out
-  URANIUM_SCREEN: 5,        // uranium ore starts appearing from this screen out
+  START_H: 40,              // rows [0, START_H) are the hand-authored starting region (the top)
+  SCREEN: 40,               // one "screen" of rows downward; screen 1 = the starting region
+  // ── war front (screens ABOVE the factory, y < 0) ───────────────────────────
+  // Screen 0 ("war screen") = rows [-WAR_ROWS, 0): military buildings only.
+  // Screen -1 = rows [-WAR_ROWS-BITER_ROWS, -WAR_ROWS): biter spawn zone, no building.
+  WAR_ROWS: 26,
+  BITER_ROWS: 16,
+  wallRow() { return -this.WAR_ROWS; },                   // the defensive wall sits on this row
+  topRow()  { return -this.WAR_ROWS - this.BITER_ROWS; }, // topmost biter spawn row
+  zoneOf(y) { return y >= 0 ? 'factory' : y >= -this.WAR_ROWS ? 'war'
+              : y >= -this.WAR_ROWS - this.BITER_ROWS ? 'biter' : 'void'; },
+  OIL_SCREEN: 3,            // crude oil starts appearing from this screen down
+  URANIUM_SCREEN: 5,        // uranium ore starts appearing from this screen down
   OIL_FRAC: 0.16,           // share of the type-noise band reserved for oil deposits
   URA_FRAC: 0.14,           // share reserved for uranium deposits
   OIL_DOTS: 0.18,           // within an oil region, fraction of tiles that are actual wells
 
   // build a fresh map object. `ores` holds ONLY the starting-region blobs as
-  // "x,y" -> resource key; tiles beyond START_W are generated procedurally.
+  // "x,y" -> resource key; tiles below START_H are generated procedurally.
   generate(seed = Date.now()) {
     const r = rng(seed);
-    const map = { seed, height: MAP_HEIGHT, ores: {} };
+    const map = { seed, width: MAP_WIDTH, ores: {} };
 
-    // one organic blob of every ore type, in roughly evenly spaced columns.
+    // one organic blob of every ore type, spread down the starting region (rows).
     const ores = [...this.ORES];
     for (let i = ores.length - 1; i > 0; i--) {        // Fisher–Yates shuffle
       const j = Math.floor(r() * (i + 1));
       [ores[i], ores[j]] = [ores[j], ores[i]];
     }
-    const cols = [4, 13, 22, 31];
+    const rows = [4, 13, 22, 31];
     ores.forEach((ore, i) => {
-      const cx = cols[i] + Math.floor(r() * 3);                   // 0..2 jitter
-      const cy = 3 + Math.floor(r() * (MAP_HEIGHT - 6));          // keep off the edges
+      const cy = rows[i] + Math.floor(r() * 3);                   // 0..2 jitter (depth)
+      const cx = 2 + Math.floor(r() * (MAP_WIDTH - 4));           // keep off the side edges
       this.growBlob(r, ore, cx, cy, 14 + Math.floor(r() * 6), map.ores);
     });
     return map;
@@ -64,7 +71,7 @@ export const MapGen = {
       const [bx, by] = tiles[Math.floor(r() * tiles.length)];
       const [dx, dy] = dirs[Math.floor(r() * 4)];
       const nx = bx + dx, ny = by + dy;
-      if (nx < 0 || ny < 0 || ny >= MAP_HEIGHT) continue;
+      if (nx < 0 || nx >= MAP_WIDTH || ny < 0) continue;
       const key = nx + ',' + ny;
       if (seen.has(key) || out[key]) continue;          // don't grow over another ore
       place(nx, ny); tiles.push([nx, ny]);
@@ -72,34 +79,31 @@ export const MapGen = {
   },
 
   oreAt(map, x, y) {
-    if (!map || x < 0 || y < 0 || y >= MAP_HEIGHT) return null;
-    const ore = x < this.START_W ? (map.ores[`${x},${y}`] || null)  // hand-authored start
+    if (!map || x < 0 || x >= MAP_WIDTH || y < 0) return null;
+    const ore = y < this.START_H ? (map.ores[`${x},${y}`] || null)  // hand-authored start
                                   : this.procOre(map, x, y);
     if (ore) { const t = this.terrainType(map, x, y); if (t === 'sand' || t === 'water') return null; } // no resources on beaches or water
     return ore;
   },
 
-  // procedural ore for the open world: smooth value-noise thresholded so that,
-  // the farther from spawn, the rarer ore is (rising threshold) and the larger
-  // each deposit grows (coarser noise cell).
+  // procedural ore for the open world: smooth value-noise thresholded into deposits.
   procOre(map, x, y) {
     const cell = 5;                                      // constant blob size — same everywhere
     const present = this.vnoise(map.seed ^ 0x9e3779b9, x, y, cell);
-    const thr = 0.85;                                    // constant density — ore doesn't thin out with distance
-    if (present <= thr) return null;
+    if (present <= 0.85) return null;                    // constant density
     // a slower-varying field picks the type, so a deposit is mostly one ore
     const tv = this.vnoise(map.seed ^ 0x85ebca6b, x, y, cell * 2.5);
-    const ore = this.pickOre(x, tv);
+    const ore = this.pickOre(y, tv);
     // crude oil isn't a solid patch: only scattered wells dot its region, the rest is grass
     if (ore === 'crudeOil' && this.hash2(x, y, map.seed ^ 0x27d4eb2f) >= this.OIL_DOTS) return null;
     return ore;
   },
 
-  // map the type-noise value to an ore. The top of the noise band is reserved for
-  // rare resources once their screen is reached (uranium first, then oil), so each
-  // forms coherent patches; the rest of the band is split among the basic ores.
-  pickOre(x, tv) {
-    const screen = Math.floor(x / this.SCREEN) + 1;     // 1-based screen index
+  // map the type-noise value to an ore. The top of the noise band is reserved for rare
+  // resources once their screen (depth) is reached (uranium first, then oil); the rest
+  // of the band is split among the basic ores.
+  pickOre(y, tv) {
+    const screen = Math.floor(y / this.SCREEN) + 1;     // 1-based screen index (depth)
     let hi = 1;                                          // shrinking band left for basics
     if (screen >= this.URANIUM_SCREEN) {
       if (tv >= hi - this.URA_FRAC) return 'uraniumOre';
@@ -131,39 +135,37 @@ export const MapGen = {
     return a + (b - a) * sy;
   },
 
-  // deterministic water (lakes) from coarse value-noise. Ore wins over water, and
-  // the first few columns stay dry so spawn is always buildable. You can't build
-  // on water (see GameState.free) — it renders as a textured patch like ore.
   // ---- elevation & terrain types ----
-  // A continuous height field (fBm: several value-noise octaves) drives terrain by
-  // band: below WATER_LVL is lake, then a SAND beach, then GRASS, then dry HIGHLAND.
-  // Because bands follow the smooth contour, beaches aren't a square ring and new
-  // terrain types are just new thresholds. The spawn region is nudged up to stay dry.
+  // A continuous height field (fBm) drives terrain by band: water → sand beach → grass →
+  // drygrass (intermediate) → highland. Bands follow the smooth contour. The spawn rows
+  // are nudged up so the top of the world stays dry/buildable.
   WATER_LVL: 0.34, SAND_LVL: 0.46, DRYGRASS_LVL: 0.62, HIGHLAND_LVL: 0.72,
   elevation(map, x, y) {
     const s = map.seed;
     let e = 0.55 * this.vnoise(s ^ 0x1a1f, x, y, 16)
           + 0.30 * this.vnoise(s ^ 0x2b2e, x, y, 7)
           + 0.15 * this.vnoise(s ^ 0x3c3d, x, y, 3.3);
-    if (x < this.START_W) e += (this.START_W - x) / this.START_W * 0.12;   // bias spawn to land
+    if (y < this.START_H) e += (this.START_H - y) / this.START_H * 0.12;   // bias spawn to land
     return e;
   },
   // a coarse biome field: some mid-elevation regions are orange desert instead of grass
   isDesert(map, x, y) { return this.vnoise(map.seed ^ 0x5eed0d, x, y, 26) > 0.62; },
   terrainType(map, x, y) {
-    if (!map || y < 0 || y >= map.height) return 'grass';
+    if (!map || x < 0 || x >= map.width) return 'grass';
+    // war front (y<0): barren battlefield — defended ground is highland, the biter
+    // zone beyond the wall is alien desert. No water/ore/trees up here.
+    if (y < 0) return y < -this.WAR_ROWS ? 'desert' : 'highland';
     const e = this.elevation(map, x, y);
-    // bands: water → sand beach → grass → drygrass (intermediate) → highland
     let t = e < this.WATER_LVL ? 'water' : e < this.SAND_LVL ? 'sand'
           : e > this.HIGHLAND_LVL ? 'highland' : e > this.DRYGRASS_LVL ? 'drygrass' : 'grass';
     if (t === 'grass' && this.isDesert(map, x, y)) t = 'desert';  // occasional orange desert
-    if (x < 6 && t === 'water') t = 'grass';                      // guarantee a dry start
-    if (x < this.START_W && (t === 'highland' || t === 'drygrass' || t === 'desert')) t = 'grass';
+    if (y < 6 && t === 'water') t = 'grass';                      // guarantee a dry start
+    if (y < this.START_H && (t === 'highland' || t === 'drygrass' || t === 'desert')) t = 'grass';
     return t;
   },
   // terrain is purely elevation-driven — independent of the resource layer, so ore can
   // sit on any terrain (the ground under it shows through). Ore is suppressed on sand.
-  waterAt(map, x, y)    { return !!map && x >= 0 && this.terrainType(map, x, y) === 'water'; },
+  waterAt(map, x, y)    { return !!map && y >= 0 && this.terrainType(map, x, y) === 'water'; },
   beachAt(map, x, y)    { return !!map && this.terrainType(map, x, y) === 'sand'; },
   drygrassAt(map, x, y) { return !!map && this.terrainType(map, x, y) === 'drygrass'; },
   desertAt(map, x, y)   { return !!map && this.terrainType(map, x, y) === 'desert'; },
@@ -175,13 +177,15 @@ export const MapGen = {
     return (h >>> 3) % 3;
   },
 
-  // deterministic obstacle at a tile (or null): clustered forests + rare boulders.
-  // Ore tiles stay clear so resource patches are always buildable. Returns
-  // {kind:'tree'|'rock', variant} — `variant` indexes the sprite list in the renderer.
+  // biome-appropriate vegetation. Returns {kind:'tree'|'rock', type, variant} where
+  // `type` keys OBSTACLES (tree-grass / tree-drygrass / tree-desert / tree-highland / rock).
+  // Trees match the biome; boulders appear in any land biome. None on water/sand.
+  TREE_FOR: { grass: 'tree-grass', drygrass: 'tree-drygrass', desert: 'tree-desert', highland: 'tree-highland' },
   obstacleAt(map, x, y) {
-    if (!map || x < 0 || y < 0 || y >= map.height) return null;
+    if (!map || x < 0 || x >= map.width || y < 0) return null;
     if (this.oreAt(map, x, y)) return null;
-    if (this.terrainType(map, x, y) !== 'grass') return null;   // forests grow only on grass
+    const t = this.terrainType(map, x, y);
+    if (t === 'water' || t === 'sand') return null;             // bare shore & water
     const seed = (map.seed || 0) | 0;
     const H = (a, b) => {
       let h = (Math.imul(a, 374761393) ^ Math.imul(b, 668265263) ^ seed) | 0;
@@ -189,9 +193,13 @@ export const MapGen = {
       return (h ^ (h >>> 16)) >>> 0;
     };
     const h = H(x, y);
-    if (h % 100 < 2) return { kind: 'rock', variant: (h >>> 7) };           // ~2% boulders
-    const fc = H(Math.floor(x / 5) * 7 + 1, Math.floor(y / 5) * 13 + 3);    // 5×5 forest clusters
-    if (fc % 100 < 26 && (h >>> 3) % 100 < 42) return { kind: 'tree', variant: (h >>> 9) };  // sparser woods
+    if (h % 100 < 2) return { kind: 'rock', type: 'rock', variant: (h >>> 7) };   // ~2% boulders, any biome
+    const tree = this.TREE_FOR[t];
+    if (!tree) return null;
+    // grass has lush forests; drier biomes get sparser, scrubbier cover
+    const [clThr, denThr] = t === 'grass' ? [26, 42] : t === 'highland' ? [16, 28] : [22, 34];
+    const fc = H(Math.floor(x / 5) * 7 + 1, Math.floor(y / 5) * 13 + 3);    // 5×5 clusters
+    if (fc % 100 < clThr && (h >>> 3) % 100 < denThr) return { kind: 'tree', type: tree, variant: (h >>> 9) };
     return null;
   },
 };
