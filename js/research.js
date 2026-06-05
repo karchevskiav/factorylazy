@@ -4,6 +4,7 @@ import { TECH }      from './data/tech.js';
 import { UI }        from './ui.js';
 import { Production } from './production.js';
 import { I18N }      from './i18n.js';
+import { BALANCE }   from './config.js';
 
 export const Research = {
   // advance the active research over `dt` seconds. `pwr` = power-satisfaction ratio (0..1).
@@ -19,7 +20,7 @@ export const Research = {
     if (labs <= 0) return;
 
     // fraction of total cost we can fund this tick (limited by the scarcest pack)
-    let frac = dt / 8 * labs * pwr;
+    let frac = dt / BALANCE.researchSeconds * labs * pwr;
     for (const r in cost) {
       const need = cost[r] * frac;
       if ((s.resources[r] || 0) < need) {

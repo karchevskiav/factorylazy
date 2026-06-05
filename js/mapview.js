@@ -269,8 +269,8 @@ export const MapView = {
 
     let recipe = null;
     if (def.place === 'ore')      recipe = this.oreUnder(x, y, def.w || 2, def.h || 2);   // drill ⇒ ore beneath
-    else if (def.recipes && def.recipes.length)                          // default to first unlocked recipe
-      recipe = def.recipes.find(r => GameState.recipeUnlocked(r)) || def.recipes[0];
+    else if (def.recipes && def.recipes.length)                          // default to first unlocked, non-upgrade recipe
+      recipe = def.recipes.find(r => GameState.recipeUnlocked(r) && !GameState.isUpgradeItem(r)) || null;
     GameState.state.entities.push({ id: GameState.nextId++, type, x, y, recipe, modules: [], _progress: 0 });
     window.UI.renderDynamic();
     this.render();

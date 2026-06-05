@@ -12,7 +12,8 @@ import { BUILDINGS }  from './data/buildings.js';
 import { POWER }      from './data/power.js';
 import { MODULES }    from './data/modules.js';
 import { TECH }       from './data/tech.js';
-import { TICK_MS, TICK_SEC, SAVE_EVERY, STAT_WINDOWS, OFFLINE_RATE, ROCKET_GOAL } from './config.js';
+import { UPGRADES, UPGRADE_GROUPS } from './data/upgrades.js';
+import { TICK_MS, TICK_SEC, SAVE_EVERY, STAT_WINDOWS, OFFLINE_RATE, ROCKET_GOAL, BALANCE } from './config.js';
 
 export const UI = {
   loop: null, saveLoop: null, booted: false,
@@ -74,7 +75,7 @@ export const UI = {
     I18N.applyStatic();
     const lb = document.getElementById('lang-btn'); if (lb) lb.textContent = '🌐 ' + I18N.label();
     if (!this.booted) return;                       // dynamic panels not built yet
-    this.renderResources(); this.renderPalette();
+    this.renderResources(); this.renderPalette(); this.renderCraft();
     this.renderResearch(); this.renderStatsTable(); this.renderDynamic();
     if (MapView.selected) this.showInspector(MapView.selected);
   },
@@ -152,6 +153,7 @@ export const UI = {
   buildStaticUI() {
     this.renderResources();
     this.renderPalette();
+    this.renderCraft();
     MapView.init();
     this.renderResearch();
     this.renderStatsTable();
@@ -221,7 +223,7 @@ export const UI = {
       }
     } else if (d.recipes && d.recipes.length) {
       const s = GameState.state;
-      const opts = d.recipes.filter(r => (r !== 'rocketPart' || s.rocketUnlocked) && GameState.recipeUnlocked(r))
+      const opts = d.recipes.filter(r => (r !== 'rocketPart' || s.rocketUnlocked) && GameState.recipeUnlocked(r) && !GameState.isUpgradeItem(r))
         .map(r => `<option value="${r}" ${ent.recipe === r ? 'selected' : ''}>${this.rn(r)}</option>`).join('');
       body += `<div class="insp-row">${I18N.t('insp_recipe')} <select onchange="UI.assignRecipe(${ent.id}, this.value)">${opts}</select></div>`;
       const rec = RECIPES[ent.recipe];
@@ -310,6 +312,67 @@ export const UI = {
     });
   },
 
+  /* ---------------- manual-craft window (§13.1) ---------------- */
+  // build the static list once: one row per upgrade item, grouped by family.
+  // Per-tick state (rank / contribution / cost / afford / unlock) is refreshed in
+  // updateCraftDynamic().
+  renderCraft() {
+    const el = document.getElementById('craft-list'); if (!el) return;
+    el.innerHTML = '';
+    for (const grp of UPGRADE_GROUPS) {
+      const title = document.createElement('div');
+      title.className = 'craft-fam-title'; title.id = 'craftfam-' + grp;
+      title.textContent = I18N.t('craft_grp_' + grp);
+      el.appendChild(title);
+      for (const id in UPGRADES) {
+        if (UPGRADES[id].group !== grp) continue;
+        const row = document.createElement('div');
+        row.className = 'craft-row'; row.id = 'craft-' + id;
+        row.innerHTML =
+          `<div class="pi">${this.ic(id, 28)}</div>
+           <div class="craft-info">
+             <div class="craft-name">${this.rn(id)} <span class="craft-rank" data-rank>×0</span></div>
+             <div class="craft-contrib dim" data-contrib></div>
+           </div>
+           <button class="craft-buy accent" data-buy onclick="UI.craftBuy('${id}')"></button>`;
+        el.appendChild(row);
+      }
+    }
+  },
+
+  // refresh the dynamic bits of every craft row; called each tick from renderDynamic
+  updateCraftDynamic() {
+    const list = document.getElementById('craft-list'); if (!list) return;
+    for (const id in UPGRADES) {
+      const row = document.getElementById('craft-' + id); if (!row) continue;
+      // every item is always shown (with its price) so the player sees the full
+      // catalogue; locked items are dimmed and their buy button is disabled.
+      const unlocked = GameState.upgradeUnlocked(id);
+      row.hidden = false;
+      row.classList.toggle('locked', !unlocked);
+      const def = UPGRADES[id], rank = GameState.upgradeRank(id);
+      row.querySelector('[data-rank]').textContent = '×' + rank;
+      // chests / tank show a flat +cap; everything else shows a per-rank %
+      row.querySelector('[data-contrib]').textContent = def.cap != null
+        ? I18N.t('craft_cap', this.fmt(def.cap), this.fmt(def.cap * rank))
+        : I18N.t('craft_contrib', (def.contrib * 100).toFixed(0), (def.contrib * rank * 100).toFixed(0));
+      const btn = row.querySelector('[data-buy]');
+      const label = unlocked ? I18N.t('craft_buy') : I18N.t('craft_locked');
+      btn.innerHTML = `<span>${label}</span><br>${this.costStr(GameState.upgradeCost(id))}`;
+      btn.disabled = !unlocked || !GameState.canAffordUpgrade(id);
+    }
+    // group headings are always visible — the whole catalogue is shown
+    for (const grp of UPGRADE_GROUPS) {
+      const t = document.getElementById('craftfam-' + grp); if (!t) continue;
+      t.hidden = false;
+    }
+  },
+
+  craftBuy(id) {
+    if (GameState.craftUpgrade(id)) this.renderDynamic();
+    else this.toast(I18N.t('toast_no_res'));
+  },
+
   renderStatsTable() {
     this.renderStatWindows();
     this.renderSparks(true);
@@ -361,7 +424,11 @@ export const UI = {
       const amt = s.resources[k] || 0;
       const d = (this.lastNet[k] || 0) / TICK_SEC;
       row.hidden = amt <= 0 && Math.abs(d) <= 0.05;
-      row.querySelector('[data-amt]').textContent = this.fmt(amt);
+      // show "amount / cap" for capped resources (science packs are uncapped); flag when full
+      const cap = GameState.capFor(k);
+      const amtEl = row.querySelector('[data-amt]');
+      amtEl.textContent = isFinite(cap) ? `${this.fmt(amt)} / ${this.fmt(cap)}` : this.fmt(amt);
+      amtEl.classList.toggle('full', isFinite(cap) && amt >= cap - 1e-6);
       const dEl = row.querySelector('[data-delta]');
       dEl.textContent = this.fmtDelta(d);
       dEl.className = 'delta ' + (d > 0.05 ? 'pos' : d < -0.05 ? 'neg' : 'zero');
@@ -387,6 +454,8 @@ export const UI = {
       }
     }
 
+    this.updateCraftDynamic();
+
     MapView.render();
 
     // energy tab + header badge appear only once the electric era is unlocked
@@ -410,9 +479,26 @@ export const UI = {
     document.getElementById('hdr-bonus').textContent = '×' + s.launchBonus.toFixed(1);
 
     const bb = document.getElementById('bonus-body');
-    if (bb) bb.innerHTML =
-      `<div class="bonus-row">${I18N.t('bonus_launches')}: <b>${s.launches}</b></div>
-       <div class="bonus-row">${I18N.t('bonus_multiplier')}: <b>×${s.launchBonus.toFixed(1)}</b></div>`;
+    if (bb) {
+      const M = GameState.multipliers();
+      const cm = GameState.craftMult(), fm = GameState.flowMult();
+      const rm = GameState.researchMult(), ps = GameState.powerSupplyMult(), pc = GameState.powerConsumeMult();
+      const global = M.speed * M.yield;
+      const row = (label, val) => `<div class="bonus-row">${label}: <b>${val}</b></div>`;
+      bb.innerHTML =
+          row(I18N.t('bonus_launches'), s.launches)
+        + row(I18N.t('bonus_multiplier'), '×' + s.launchBonus.toFixed(1))
+        + row(I18N.t('bonus_craft'), '×' + cm.toFixed(2))
+        + row(I18N.t('bonus_flow'), '×' + fm.toFixed(2))
+        + row(I18N.t('bonus_speed'), '×' + M.speed.toFixed(2))
+        + row(I18N.t('bonus_yield'), '×' + M.yield.toFixed(2))
+        + row(I18N.t('bonus_research'), '×' + rm.toFixed(2))
+        + row(I18N.t('bonus_power_supply'), '×' + ps.toFixed(2))
+        + row(I18N.t('bonus_power_save'), '÷' + (1 / pc).toFixed(2))
+        + row(I18N.t('bonus_storage'), this.fmt(GameState.storageCap()))
+        + row(I18N.t('bonus_fluid'), this.fmt(GameState.fluidCap()))
+        + `<div class="bonus-row bonus-total">${I18N.t('bonus_global')}: <b>×${this.fmt(global)}</b></div>`;
+    }
 
     if (s.research.current) {
       const card = document.getElementById('tech-' + s.research.current);
@@ -488,7 +574,7 @@ export const UI = {
   closeTotals() { document.getElementById('totals-modal').classList.add('hidden'); },
 
   renderAll() {
-    this.renderResources(); this.renderPalette();
+    this.renderResources(); this.renderPalette(); this.renderCraft();
     this.renderResearch(); this.renderStatsTable(); this.renderDynamic();
   },
 
@@ -527,7 +613,7 @@ export const UI = {
     const s = GameState.state;
     if ((s.resources.rocketPart || 0) < ROCKET_GOAL) return;
     const launches = s.launches + 1;
-    const bonus = Math.pow(1.5, launches);
+    const bonus = Math.pow(BALANCE.rocketBonus, launches);
     if (!confirm(I18N.t('confirm_launch', bonus.toFixed(1), launches))) return;
     this.showTotalsModal();                    // summarise the run before wiping it
     this.stop();

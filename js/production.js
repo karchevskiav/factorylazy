@@ -6,7 +6,7 @@ import { RECIPES }   from './data/recipes.js';
 import { BUILDINGS } from './data/buildings.js';
 import { POWER }     from './data/power.js';
 import { MODULES }   from './data/modules.js';
-import { TICK_SEC }  from './config.js';
+import { TICK_SEC, BALANCE } from './config.js';
 import { Research }  from './research.js';
 
 export const Production = {
@@ -67,8 +67,11 @@ export const Production = {
       const c = BUILDINGS[e.type] && BUILDINGS[e.type].cat;
       if (BUILDINGS[e.type] && !e.recipe && c !== 'beacon' && c !== 'lab') continue;
       const me = this.modEffect(e);
-      consumed += def.energy * Math.max(0.1, 1 + me.energy);
+      consumed += def.energy * Math.max(BALANCE.minEnergyFactor, 1 + me.energy);
     }
+    // manual-craft bonuses: poles raise effective supply, efficiency modules cut draw
+    produced *= GameState.powerSupplyMult();
+    consumed *= GameState.powerConsumeMult();
     const ratio = consumed > 0 ? Math.min(1, produced / consumed) : 1;
     return { produced, consumed, ratio };
   },
@@ -85,11 +88,13 @@ export const Production = {
       const def = GameState.def(e.type);
       if (!def || !e.recipe) continue;                 // generators / beacons make nothing
       const me = this.modEffect(e);
-      const speedMul = Math.max(0.05, def.speed * (M.speed + me.speed + GameState.beaconSpeedAt(e.x, e.y)));
+      const speedMul = Math.max(BALANCE.minSpeed, def.speed * (M.speed + me.speed + GameState.beaconSpeedAt(e.x, e.y)));
 
       // extractors (miner / pumpjack / offshore pump): produce raw with no inputs (1 craft/sec)
       if (def.cat === 'mine' || def.cat === 'oil' || def.cat === 'pump') {
-        const made = speedMul * dt * rateMods * (M.yield + me.yld);
+        let made = speedMul * dt * rateMods * (M.yield + me.yld);
+        const cap = GameState.capFor(e.recipe);                 // hard cap: excess simply not produced
+        if (isFinite(cap)) made = Math.max(0, Math.min(made, cap - (s.resources[e.recipe] || 0)));
         s.resources[e.recipe] = (s.resources[e.recipe] || 0) + made;
         net[e.recipe] = (net[e.recipe] || 0) + made;
         s.totals.produced[e.recipe] = (s.totals.produced[e.recipe] || 0) + made;
@@ -99,12 +104,21 @@ export const Production = {
 
       const rec = RECIPES[e.recipe];
       if (!rec || !GameState.recipeUnlocked(e.recipe)) continue;   // not researched yet
+      if (GameState.isUpgradeItem(e.recipe)) continue;            // bonus items are crafted only in the manual-craft window
 
       // crafts wanted this step, then clamp by available inputs
       let crafts = speedMul / rec.time * dt * rateMods;
       for (const ing in rec.inputs) {
         const maxByIng = (s.resources[ing] || 0) / rec.inputs[ing];
         if (maxByIng < crafts) crafts = maxByIng;
+      }
+      // hard cap: don't craft more output than there's room for (no input is wasted)
+      const cap = GameState.capFor(e.recipe);
+      if (isFinite(cap)) {
+        const perCraft = rec.out * (M.yield + me.yld);
+        const room = cap - (s.resources[e.recipe] || 0);
+        const maxByCap = perCraft > 0 ? room / perCraft : crafts;
+        if (maxByCap < crafts) crafts = Math.max(0, maxByCap);
       }
       if (crafts <= 0) continue;
 

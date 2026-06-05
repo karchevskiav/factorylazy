@@ -15,3 +15,18 @@ export const STAT_WINDOWS = [
   { id: '4h',  min: 240, every: 120 },   // 120 points
 ];
 export const ROCKET_GOAL = 100;         // rocket parts required to launch
+
+// ---------------------------------------------------------------------------
+// BALANCE — central tuning knobs for the engine & economy. Per-item coefficients
+// (contrib / costMul / capacity / baseCost) live in their data tables
+// (data/upgrades.js etc.); the scalars here are the ones the engine reads directly.
+// ---------------------------------------------------------------------------
+export const BALANCE = {
+  storageBase:     100,   // starting cap for SOLID resources (chests raise it)
+  fluidBase:       100,   // starting cap for FLUIDS (only the storage tank raises it)
+  minSpeed:        0.05,  // floor on a building's effective craft speed
+  minEnergyFactor: 0.1,   // floor on a machine's energy draw after efficiency modules
+  beaconEffect:    0.5,   // fraction of a module's effect a beacon transmits (vanilla = half)
+  researchSeconds: 8,     // seconds of lab throughput that fund one full unit of research cost
+  rocketBonus:     1.5,   // permanent production multiplier per rocket launched (prestige)
+};

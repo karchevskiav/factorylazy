@@ -24,6 +24,7 @@
     <!-- left sidebar: 6 radio-driven tabs (don't affect the map) -->
     <input type="radio" name="lpane" id="lp-resources" checked>
     <input type="radio" name="lpane" id="lp-build">
+    <input type="radio" name="lpane" id="lp-craft">
     <input type="radio" name="lpane" id="lp-research">
     <input type="radio" name="lpane" id="lp-bonus">
     <input type="radio" name="lpane" id="lp-energy">
@@ -33,6 +34,7 @@
       <nav class="lnav">
         <label for="lp-resources"><span class="li">📦</span><span class="lt" data-i18n="ltab_resources">RES</span></label>
         <label for="lp-build"><span class="li">🏗</span><span class="lt" data-i18n="ltab_build">BUILD</span></label>
+        <label for="lp-craft"><span class="li">🔧</span><span class="lt" data-i18n="ltab_craft">CRAFT</span></label>
         <label for="lp-research"><span class="li">🔬</span><span class="lt" data-i18n="ltab_research">TECH</span></label>
         <label for="lp-bonus"><span class="li">🏆</span><span class="lt" data-i18n="ltab_bonus">BONUS</span></label>
         <label for="lp-energy" id="lnav-energy" hidden><span class="li">⚡</span><span class="lt" data-i18n="ltab_energy">PWR</span></label>
@@ -48,6 +50,12 @@
         <section class="lpanel" id="lpanel-build">
           <div class="section-title" data-i18n="sec_build">🏗 BUILD</div>
           <div id="bld-palette" class="bld-palette"></div>
+        </section>
+
+        <section class="lpanel" id="lpanel-craft">
+          <div class="section-title" data-i18n="sec_craft">🔧 MANUAL CRAFT</div>
+          <div class="craft-hint dim" data-i18n="craft_hint">Craft items to permanently raise global bonuses — no map space needed.</div>
+          <div id="craft-list" class="craft-list"></div>
         </section>
 
         <section class="lpanel" id="lpanel-research">

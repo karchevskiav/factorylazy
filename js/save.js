@@ -45,6 +45,7 @@ export const Save = {
     s.modulesUnlocked = !!loaded.modulesUnlocked;
     s.rocketUnlocked  = !!loaded.rocketUnlocked;
     s.totals          = loaded.totals || { produced: {}, consumed: {} };
+    if (loaded.upgrades) Object.assign(s.upgrades, loaded.upgrades);   // manual-craft ranks
     s.lastTick        = loaded.lastTick || Date.now();
     GameState.state = s;
     return s;

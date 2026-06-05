@@ -5,8 +5,9 @@ import { BUILDINGS } from './data/buildings.js';
 import { POWER }     from './data/power.js';
 import { TECH }      from './data/tech.js';
 import { MODULES }   from './data/modules.js';
+import { UPGRADES, STORAGE_BASE, FLUID_BASE, FLUIDS } from './data/upgrades.js';
 import { MapGen }    from './map.js';
-import { STAT_WINDOWS } from './config.js';
+import { STAT_WINDOWS, BALANCE } from './config.js';
 
 export const GameState = {
   state: null,
@@ -28,6 +29,9 @@ export const GameState = {
       lastTick: Date.now(),
       lastSave: Date.now(),
       totals: { produced: {}, consumed: {} },
+      // manual-craft upgrade ranks (BALANCE.md §3/§15): item key -> rank (0+).
+      // Manipulators feed M.speed, conveyors feed M.yield via multipliers().
+      upgrades: Object.fromEntries(Object.keys(UPGRADES).map(k => [k, 0])),
       // per-window production samples. buf: winId -> resKey -> avg net/sec ring
       // buffer; acc/ticks accumulate the current bucket. Not persisted (rebuilt
       // each session). Resources that never flow get no buffer.
@@ -100,13 +104,72 @@ export const GameState = {
       if (Math.max(dx, dy) > R) continue;
       for (const m of (e.modules || [])) {
         const mod = m && MODULES[m];
-        if (mod && mod.speed > 0) bonus += mod.speed * 0.5;   // beacons apply half effect, like Factorio
+        if (mod && mod.speed > 0) bonus += mod.speed * BALANCE.beaconEffect;   // beacons transmit a fraction (vanilla = half)
       }
     }
     return bonus;
   },
 
-  // global speed / yield multipliers from completed research (+ prestige bonus)
+  // ---------------- manual-craft upgrades (BALANCE.md §3, §15, §16) ----------------
+  // true if this item is a manual-craft bonus upgrade — such items must NOT be
+  // produced by assemblers (they only exist as ranks bought in the craft window).
+  isUpgradeItem(key) { return !!UPGRADES[key]; },
+  upgradeRank(id) { return (this.state.upgrades && this.state.upgrades[id]) || 0; },
+  // an upgrade item can be ranked up once its (resource) recipe is researched
+  upgradeUnlocked(id) { return !!UPGRADES[id] && this.recipeUnlocked(id); },
+  // cost of the NEXT rank: baseCost × costMul^rank
+  upgradeCost(id) {
+    const def = UPGRADES[id]; if (!def) return {};
+    const mul = Math.pow(def.costMul, this.upgradeRank(id)), c = {};
+    for (const r in def.baseCost) c[r] = def.baseCost[r] * mul;
+    return c;
+  },
+  canAffordUpgrade(id) {
+    const c = this.upgradeCost(id), s = this.state;
+    for (const r in c) if ((s.resources[r] || 0) < Math.ceil(c[r])) return false;
+    return true;
+  },
+  // pay for and apply one rank; returns true on success
+  craftUpgrade(id) {
+    if (!this.upgradeUnlocked(id) || !this.canAffordUpgrade(id)) return false;
+    const c = this.upgradeCost(id), s = this.state;
+    for (const r in c) s.resources[r] = Math.max(0, (s.resources[r] || 0) - Math.ceil(c[r]));
+    s.upgrades[id] = this.upgradeRank(id) + 1;
+    return true;
+  },
+  // Σ(contrib × rank) over every upgrade that feeds the given bonus channel.
+  effectSum(effect) {
+    let sum = 0;
+    for (const id in UPGRADES) if (UPGRADES[id].effect === effect) sum += (UPGRADES[id].contrib || 0) * this.upgradeRank(id);
+    return sum;
+  },
+  craftMult()        { return 1 + this.effectSum('speed'); },        // manipulators + speed modules
+  flowMult()         { return 1 + this.effectSum('yield'); },        // conveyors + productivity modules
+  researchMult()     { return 1 + this.effectSum('research'); },     // radar + combinators → lab speed
+  powerSupplyMult()  { return 1 + this.effectSum('powerSupply'); },  // poles → ×produced MW
+  powerConsumeMult() { return 1 / (1 + this.effectSum('powerSave')); }, // efficiency module → ÷consumed MW
+  // solid-resource cap (BALANCE §5): base + Σ(chest capacity × rank)
+  storageCap() {
+    let cap = STORAGE_BASE;
+    for (const id in UPGRADES) if (UPGRADES[id].effect === 'storage') cap += (UPGRADES[id].cap || 0) * this.upgradeRank(id);
+    return cap;
+  },
+  // fluid cap: base + Σ(storage-tank capacity × rank). Chests do NOT help fluids.
+  fluidCap() {
+    let cap = FLUID_BASE;
+    for (const id in UPGRADES) if (UPGRADES[id].effect === 'fluidStorage') cap += (UPGRADES[id].cap || 0) * this.upgradeRank(id);
+    return cap;
+  },
+  // the cap that applies to one resource: science packs uncapped, fluids on their own
+  // track (storage tank), everything else on the solid track (chests).
+  capFor(key) {
+    if (/Science$/.test(key)) return Infinity;
+    return FLUIDS.has(key) ? this.fluidCap() : this.storageCap();
+  },
+
+  // global speed / yield multipliers from completed research (+ prestige bonus +
+  // manual-craft upgrades: manipulators/speed-modules add to speed, conveyors/
+  // productivity-modules add to yield — §16 B).
   multipliers() {
     let speed = 1, yld = 1;
     for (const t of this.state.research.done) {
@@ -115,6 +178,8 @@ export const GameState = {
       if (e.globalSpeed) speed += e.globalSpeed;
       if (e.globalYield) yld += e.globalYield;
     }
+    speed += this.craftMult() - 1;     // manipulators + speed modules
+    yld   += this.flowMult()  - 1;     // conveyors + productivity modules
     return { speed, yield: yld * this.state.launchBonus };
   },
 
@@ -141,7 +206,7 @@ export const GameState = {
     let sum = 0;
     for (const e of this.state.entities)
       if (e.type === 'lab') sum += labDef.speed * (1 + this.beaconSpeedAt(e.x, e.y));
-    return sum * this.multipliers().speed;
+    return sum * this.multipliers().speed * this.researchMult();
   },
   isBuildingUnlocked(key) {
     const u = BUILDINGS[key].unlock;
