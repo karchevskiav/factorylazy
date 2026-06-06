@@ -37,6 +37,7 @@ export const Production = {
     // pre-electric era: no power generators unlocked yet → no grid, no throttling
     if (!GameState.powerUnlocked()) return { produced: 0, consumed: 0, ratio: 1 };
     let produced = 0, consumed = 0;
+    const M = GameState.multipliers();
 
     // every generator type contributes MW; fuel-burners (steam/nuclear) scale by available fuel
     for (const k in POWER) {
@@ -60,14 +61,24 @@ export const Production = {
       }
     }
 
-    // consumption from every powered entity (machines + beacons + labs)
+    // consumption from every powered entity that is actively working this tick:
+    // a machine only draws power while it has a craft in progress (or could start one),
+    // a lab only while it can fund a research cycle, beacons whenever placed. Idle
+    // machines (starved of inputs, output capped, nothing to research) draw nothing.
     for (const e of s.entities) {
       const def = GameState.def(e.type);
       if (!def || !def.energy) continue;
-      const c = BUILDINGS[e.type] && BUILDINGS[e.type].cat;
-      if (BUILDINGS[e.type] && !e.recipe && c !== 'beacon' && c !== 'lab') continue;
+      if (!this.busy(e, def)) continue;
       const me = this.modEffect(e);
-      consumed += def.energy * Math.max(BALANCE.minEnergyFactor, 1 + me.energy);
+      let draw = def.energy * Math.max(BALANCE.minEnergyFactor, 1 + me.energy);
+      // a faster machine does proportionally more work per second, so it draws
+      // proportionally more power — speed from manipulators/research/speed modules/
+      // beacons is NOT a free efficiency win. (Beacons don't craft → flat draw.)
+      if (def.cat !== 'beacon') {
+        const speedFactor = M.speed + me.speed + GameState.beaconSpeedAt(e.x, e.y);
+        draw *= Math.max(BALANCE.minEnergyFactor, speedFactor);
+      }
+      consumed += draw;
     }
     // manual-craft bonuses: poles raise effective supply, efficiency modules cut draw
     produced *= GameState.powerSupplyMult();
@@ -76,63 +87,136 @@ export const Production = {
     return { produced, consumed, ratio };
   },
 
+  // resolve an entity's effective recipe: extractors (miner/pumpjack/offshore pump)
+  // behave as a 1-second, input-free craft of one unit of their raw resource. Returns
+  // null for anything that can't or shouldn't run in the production loop.
+  recipeFor(e, def) {
+    const cat = def.cat;
+    if (cat === 'mine' || cat === 'oil' || cat === 'pump') return { out: 1, time: 1, inputs: {} };
+    const rec = RECIPES[e.recipe];
+    if (!rec || !GameState.recipeUnlocked(e.recipe)) return null;
+    if (GameState.isUpgradeItem(e.recipe)) return null;     // bonus items: manual-craft window only
+    if (GameState.isBuildingItem(e.recipe)) return null;    // buildings are placed, never mass-produced
+    if (GameState.isHandcraftItem(e.recipe)) return null;   // weapons/armor are hand-crafted only
+    return rec;
+  },
+
+  // is this powered entity actively working this tick? Used to gate power draw:
+  // only machines with a craft in progress (or able to start one) consume electricity.
+  busy(e, def) {
+    const s = GameState.state;
+    const cat = def.cat;
+    if (BUILDINGS[e.type] && cat === 'beacon') return true;   // beacons always draw
+    if (cat === 'lab') return Research.labBusy(e);
+    if (!e.recipe) return false;
+    const rec = this.recipeFor(e, def);
+    if (!rec) return false;
+    if (e._crafting) return true;                             // mid-craft: keep drawing
+    for (const ing in rec.inputs) if ((s.resources[ing] || 0) < rec.inputs[ing]) return false;
+    const cap = GameState.capFor(e.recipe);
+    if (isFinite(cap) && (s.resources[e.recipe] || 0) >= cap) return false;
+    return true;
+  },
+
   // one production step over `dt` seconds; `mult` is a global rate multiplier (offline debuff).
+  //
+  // DISCRETE craft model: a building consumes a recipe's inputs at the START of a craft,
+  // advances a per-entity `_progress` bar (0→1) at its craft speed, and emits the output
+  // ONLY when that bar fills. Power-starved machines advance proportionally slower.
   step(dt, mult) {
     const s = GameState.state;
     const M = GameState.multipliers();
     const pwr = this.power();
-    const rateMods = mult * pwr.ratio;
     const net = {};  // per-resource net change this step (for /sec readouts & history)
 
     for (const e of this.ordered()) {
       const def = GameState.def(e.type);
       if (!def || !e.recipe) continue;                 // generators / beacons make nothing
+      const rec = this.recipeFor(e, def);
+      if (!rec) continue;
       const me = this.modEffect(e);
-      const speedMul = Math.max(BALANCE.minSpeed, def.speed * (M.speed + me.speed + GameState.beaconSpeedAt(e.x, e.y)));
+      const catMul = (BALANCE.catSpeed && BALANCE.catSpeed[def.cat]) || 1;   // assemblers/furnaces/labs run slower; ore unaffected
+      const speedMul = Math.max(BALANCE.minSpeed, def.speed * catMul * (M.speed + me.speed + GameState.beaconSpeedAt(e.x, e.y)));
 
-      // extractors (miner / pumpjack / offshore pump): produce raw with no inputs (1 craft/sec)
-      if (def.cat === 'mine' || def.cat === 'oil' || def.cat === 'pump') {
-        let made = speedMul * dt * rateMods * (M.yield + me.yld);
-        const cap = GameState.capFor(e.recipe);                 // hard cap: excess simply not produced
-        if (isFinite(cap)) made = Math.max(0, Math.min(made, cap - (s.resources[e.recipe] || 0)));
-        s.resources[e.recipe] = (s.resources[e.recipe] || 0) + made;
-        net[e.recipe] = (net[e.recipe] || 0) + made;
-        s.totals.produced[e.recipe] = (s.totals.produced[e.recipe] || 0) + made;
-        e._progress = ((e._progress || 0) + speedMul * dt) % 1;
-        continue;
-      }
+      // only electric machines (def.energy > 0) are throttled by the grid; burner
+      // drills/furnaces (energy 0) keep running on fuel even with no power.
+      const powerFactor = def.energy > 0 ? pwr.ratio : 1;
 
-      const rec = RECIPES[e.recipe];
-      if (!rec || !GameState.recipeUnlocked(e.recipe)) continue;   // not researched yet
-      if (GameState.isUpgradeItem(e.recipe)) continue;            // bonus items are crafted only in the manual-craft window
-
-      // crafts wanted this step, then clamp by available inputs
-      let crafts = speedMul / rec.time * dt * rateMods;
-      for (const ing in rec.inputs) {
-        const maxByIng = (s.resources[ing] || 0) / rec.inputs[ing];
-        if (maxByIng < crafts) crafts = maxByIng;
-      }
-      // hard cap: don't craft more output than there's room for (no input is wasted)
+      const perOut = rec.out * (M.yield + me.yld);
       const cap = GameState.capFor(e.recipe);
-      if (isFinite(cap)) {
-        const perCraft = rec.out * (M.yield + me.yld);
-        const room = cap - (s.resources[e.recipe] || 0);
-        const maxByCap = perCraft > 0 ? room / perCraft : crafts;
-        if (maxByCap < crafts) crafts = Math.max(0, maxByCap);
-      }
-      if (crafts <= 0) continue;
+      let budget = speedMul / rec.time * dt * mult * powerFactor;   // craft-progress available this tick
+      const budgetStart = budget;                                   // for the smooth /sec flow readout
+      let guard = 0;
 
-      for (const ing in rec.inputs) {
-        const used = rec.inputs[ing] * crafts;
-        s.resources[ing] = Math.max(0, (s.resources[ing] || 0) - used);
-        net[ing] = (net[ing] || 0) - used;
-        s.totals.consumed[ing] = (s.totals.consumed[ing] || 0) + used;
+      while (budget > 0 && guard++ < 100000) {
+        // bulk fast-path: at a clean craft boundary with ≥1 full craft of headroom,
+        // start+finish many crafts at once (keeps offline catch-up cheap).
+        if (!e._crafting && (e._progress || 0) === 0 && budget >= 1) {
+          let n = Math.floor(budget);
+          for (const ing in rec.inputs) {
+            const can = Math.floor((s.resources[ing] || 0) / rec.inputs[ing]);
+            if (can < n) n = can;
+          }
+          if (isFinite(cap) && perOut > 0) {
+            const can = Math.floor(Math.max(0, cap - (s.resources[e.recipe] || 0)) / perOut);
+            if (can < n) n = can;
+          }
+          if (n > 0) {
+            for (const ing in rec.inputs) {
+              const used = rec.inputs[ing] * n;
+              s.resources[ing] = Math.max(0, (s.resources[ing] || 0) - used);
+              s.totals.consumed[ing] = (s.totals.consumed[ing] || 0) + used;
+            }
+            let made = perOut * n;
+            if (isFinite(cap)) made = Math.max(0, Math.min(made, cap - (s.resources[e.recipe] || 0)));
+            s.resources[e.recipe] = (s.resources[e.recipe] || 0) + made;
+            s.totals.produced[e.recipe] = (s.totals.produced[e.recipe] || 0) + made;
+            budget -= n;
+            continue;
+          }
+        }
+
+        // start a single craft: pay inputs up front (resources spent at production START)
+        if (!e._crafting) {
+          let canStart = true;
+          for (const ing in rec.inputs) {
+            if ((s.resources[ing] || 0) < rec.inputs[ing]) { canStart = false; break; }
+          }
+          if (canStart && isFinite(cap) && (s.resources[e.recipe] || 0) >= cap) canStart = false;
+          if (!canStart) break;
+          for (const ing in rec.inputs) {
+            const used = rec.inputs[ing];
+            s.resources[ing] = Math.max(0, (s.resources[ing] || 0) - used);
+            s.totals.consumed[ing] = (s.totals.consumed[ing] || 0) + used;
+          }
+          e._crafting = true;
+        }
+
+        const remaining = 1 - (e._progress || 0);
+        if (budget >= remaining) {
+          // craft completes: emit the output (increment only at COMPLETION) and reset
+          budget -= remaining;
+          e._progress = 0;
+          e._crafting = false;
+          let made = perOut;
+          if (isFinite(cap)) made = Math.max(0, Math.min(made, cap - (s.resources[e.recipe] || 0)));
+          s.resources[e.recipe] = (s.resources[e.recipe] || 0) + made;
+          s.totals.produced[e.recipe] = (s.totals.produced[e.recipe] || 0) + made;
+        } else {
+          e._progress = (e._progress || 0) + budget;
+          budget = 0;
+        }
       }
-      const made = rec.out * crafts * (M.yield + me.yld);
-      s.resources[e.recipe] = (s.resources[e.recipe] || 0) + made;
-      net[e.recipe] = (net[e.recipe] || 0) + made;
-      s.totals.produced[e.recipe] = (s.totals.produced[e.recipe] || 0) + made;
-      e._progress = ((e._progress || 0) + speedMul / rec.time * dt) % 1;
+
+      // Report the SMOOTH flow this tick for the /sec readouts & graphs: the work actually
+      // done (in craft-units) × the recipe's per-craft amounts. Resources still change only
+      // in discrete chunks above, but the displayed rate reflects steady throughput — so a
+      // craft slower than the sample interval no longer makes the readout flicker/decay.
+      const progressDone = budgetStart - budget;
+      if (progressDone > 0) {
+        for (const ing in rec.inputs) net[ing] = (net[ing] || 0) - rec.inputs[ing] * progressDone;
+        net[e.recipe] = (net[e.recipe] || 0) + perOut * progressDone;
+      }
     }
 
     Research.step(dt, pwr.ratio);

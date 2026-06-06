@@ -125,17 +125,21 @@ export const UI = {
   tick() {
     const { net, pwr } = Production.step(TICK_SEC, 1);
     this.lastNet = net; this.lastPwr = pwr;
-    this.accumulateStats(net);
+    this.accumulateStats(net, pwr);
     this.renderDynamic();
   },
 
   // feed this tick's net change into every window's accumulator; when a window's
   // bucket is full, push the bucket's average net/sec into its ring buffer.
-  accumulateStats(net) {
+  accumulateStats(net, pwr) {
     const s = GameState.state, st = s.stats;
     for (const w of STAT_WINDOWS) {
       const acc = st.acc[w.id];
       for (const k in net) acc[k] = (acc[k] || 0) + net[k];
+      // power is an instantaneous rate (MW), not a per-tick amount: accumulate
+      // MW·tickSec so the /w.every divide below yields the AVERAGE MW over the bucket.
+      acc.__pProd = (acc.__pProd || 0) + (pwr ? pwr.produced : 0) * TICK_SEC;
+      acc.__pCons = (acc.__pCons || 0) + (pwr ? pwr.consumed : 0) * TICK_SEC;
       if (++st.ticks[w.id] < w.every / TICK_SEC) continue;
       const buf = st.buf[w.id], points = (w.min * 60) / w.every;
       for (const k in RESOURCES) {
@@ -144,9 +148,33 @@ export const UI = {
         arr.push((acc[k] || 0) / w.every);                     // avg net/sec over the bucket
         if (arr.length > points) arr.shift();
       }
+      // electricity series (separate from resources): avg MW produced / consumed
+      for (const pk of ['__pProd', '__pCons']) {
+        const arr = buf[pk] || (buf[pk] = []);
+        arr.push((acc[pk] || 0) / w.every);
+        if (arr.length > points) arr.shift();
+      }
       st.acc[w.id] = {};
       st.ticks[w.id] = 0;
     }
+  },
+
+  // smoothed net/sec for the resources table. With discrete crafting the raw per-tick
+  // net is spiky (0 most ticks, a burst on completion), so we report the same averaged
+  // value the graphs are built from. We slide a window of TWO sample intervals over the
+  // finest-resolution series: the in-progress bucket plus the last two completed samples,
+  // time-weighted so the figure glides instead of jumping.
+  deltaRate(k) {
+    const st = GameState.state.stats;
+    const w = STAT_WINDOWS[0];                       // finest resolution (e.g. 5m / every 3s)
+    if (w.every <= 0) return 0;
+    const arr = st.buf[w.id] && st.buf[w.id][k];
+    const last = (arr && arr.length)     ? arr[arr.length - 1] : 0;
+    const prev = (arr && arr.length > 1) ? arr[arr.length - 2] : last;
+    const accVal = (st.acc[w.id] && st.acc[w.id][k]) || 0;
+    const elapsed = Math.min(w.every, (st.ticks[w.id] || 0) * TICK_SEC);   // secs into current bucket
+    // window length = 2·every: partial bucket (accVal) + last sample (every s) + prev sample
+    return (accVal + last * w.every + prev * (w.every - elapsed)) / (2 * w.every);
   },
 
   /* ---------------- static DOM scaffolding ---------------- */
@@ -178,7 +206,7 @@ export const UI = {
     { id: 'mining',   cats: ['mine', 'pump', 'oil'] },
     { id: 'smelting', cats: ['smelt'] },
     { id: 'crafting', cats: ['craft', 'chem', 'centrifuge'] },
-    { id: 'power',    cats: [] },                          // every POWER generator
+    { id: 'power',    cats: ['boiler'] },                  // every POWER generator + the boiler
     { id: 'military', cats: ['military'] },
     { id: 'other',    cats: ['beacon', 'lab'] },
   ],
@@ -211,10 +239,10 @@ export const UI = {
   showInspector(ent) {
     const el = document.getElementById('entity-inspector'); if (!el) return;
     const d = GameState.def(ent.type);
-    let body = `<div class="insp-head">${this.bic(ent.type, 24)} <b>${I18N.name(ent.type, d.name)}</b> <span class="dim">@${ent.x},${ent.y}</span></div>`;
+    let body = `<div class="insp-head">${this.bic(ent.type, 24)} <b>${I18N.name(ent.type, d.name)}</b> <span class="dim">@${ent.x},${ent.y}</span><button class="insp-close" onclick="UI.hideInspector()" title="${I18N.t('insp_close')}">✕</button></div>`;
 
     if (d.place === 'ore') {
-      const ores = MapView.oresUnder(ent.x, ent.y);
+      const ores = MapView.oresUnder(ent.x, ent.y, d.w || 2, d.h || 2);
       if (ores.length > 1) {
         const opts = ores.map(o => `<option value="${o}" ${ent.recipe === o ? 'selected' : ''}>${this.rn(o)}</option>`).join('');
         body += `<div class="insp-row">${I18N.t('insp_mining')} <select onchange="UI.assignRecipe(${ent.id}, this.value)">${opts}</select></div>`;
@@ -223,7 +251,7 @@ export const UI = {
       }
     } else if (d.recipes && d.recipes.length) {
       const s = GameState.state;
-      const opts = d.recipes.filter(r => (r !== 'rocketPart' || s.rocketUnlocked) && GameState.recipeUnlocked(r) && !GameState.isUpgradeItem(r))
+      const opts = d.recipes.filter(r => (r !== 'rocketPart' || s.rocketUnlocked) && GameState.recipeUnlocked(r) && !GameState.isUpgradeItem(r) && !GameState.isBuildingItem(r) && !GameState.isHandcraftItem(r))
         .map(r => `<option value="${r}" ${ent.recipe === r ? 'selected' : ''}>${this.rn(r)}</option>`).join('');
       body += `<div class="insp-row">${I18N.t('insp_recipe')} <select onchange="UI.assignRecipe(${ent.id}, this.value)">${opts}</select></div>`;
       const rec = RECIPES[ent.recipe];
@@ -260,9 +288,10 @@ export const UI = {
     }
 
     body += `<div class="insp-row"><button class="danger" onclick="UI.removeEntityById(${ent.id})">${I18N.t('insp_remove')}</button></div>`;
-    el.innerHTML = body; el.hidden = false;
+    el.innerHTML = body;
+    const ov = document.getElementById('inspector-overlay'); if (ov) ov.classList.remove('hidden');
   },
-  hideInspector() { const el = document.getElementById('entity-inspector'); if (el) el.hidden = true; },
+  hideInspector() { const ov = document.getElementById('inspector-overlay'); if (ov) ov.classList.add('hidden'); },
 
   assignRecipe(id, recipe) {
     const e = this.entById(id); if (!e) return;
@@ -345,11 +374,12 @@ export const UI = {
     const list = document.getElementById('craft-list'); if (!list) return;
     for (const id in UPGRADES) {
       const row = document.getElementById('craft-' + id); if (!row) continue;
-      // every item is always shown (with its price) so the player sees the full
-      // catalogue; locked items are dimmed and their buy button is disabled.
+      // items whose recipe isn't researched yet are hidden entirely — the player only
+      // sees bonuses they can actually craft.
       const unlocked = GameState.upgradeUnlocked(id);
-      row.hidden = false;
+      row.hidden = !unlocked;
       row.classList.toggle('locked', !unlocked);
+      if (!unlocked) continue;
       const def = UPGRADES[id], rank = GameState.upgradeRank(id);
       row.querySelector('[data-rank]').textContent = '×' + rank;
       // chests / tank show a flat +cap; everything else shows a per-rank %
@@ -361,10 +391,15 @@ export const UI = {
       btn.innerHTML = `<span>${label}</span><br>${this.costStr(GameState.upgradeCost(id))}`;
       btn.disabled = !unlocked || !GameState.canAffordUpgrade(id);
     }
-    // group headings are always visible — the whole catalogue is shown
+    // a group heading is shown only when at least one of its items is unlocked
     for (const grp of UPGRADE_GROUPS) {
       const t = document.getElementById('craftfam-' + grp); if (!t) continue;
-      t.hidden = false;
+      let any = false;
+      for (const id in UPGRADES) {
+        if (UPGRADES[id].group !== grp) continue;
+        if (GameState.upgradeUnlocked(id)) { any = true; break; }
+      }
+      t.hidden = !any;
     }
   },
 
@@ -422,7 +457,7 @@ export const UI = {
     for (const k in RESOURCES) {
       const row = document.getElementById('res-' + k); if (!row) continue;
       const amt = s.resources[k] || 0;
-      const d = (this.lastNet[k] || 0) / TICK_SEC;
+      const d = this.deltaRate(k);                   // smoothed /sec, matching the graphs
       row.hidden = amt <= 0 && Math.abs(d) <= 0.05;
       // show "amount / cap" for capped resources (science packs are uncapped); flag when full
       const cap = GameState.capFor(k);
@@ -456,6 +491,10 @@ export const UI = {
 
     this.updateCraftDynamic();
 
+    // nudge the player to pick a technology: blink the research tab while nothing is queued
+    const rtab = document.getElementById('lnav-research');
+    if (rtab) rtab.classList.toggle('blink', !s.research.current);
+
     MapView.render();
 
     // energy tab + header badge appear only once the electric era is unlocked
@@ -464,6 +503,8 @@ export const UI = {
     document.getElementById('hdr-power-badge').hidden = !powerOn;
 
     const pwr = this.lastPwr;
+    // warn the player of a power deficit: blink the energy tab red when draw exceeds supply
+    document.getElementById('lnav-energy').classList.toggle('blink-red', powerOn && pwr.consumed > pwr.produced + 1e-6);
     document.getElementById('energy-prod').textContent = this.fmt(pwr.produced);
     document.getElementById('energy-cons').textContent = this.fmt(pwr.consumed);
     const fill = document.getElementById('energy-fill');
@@ -474,6 +515,7 @@ export const UI = {
     if (pwr.ratio >= 0.999) { st.textContent = I18N.t('energy_nominal'); st.style.color = 'var(--green)'; }
     else { st.textContent = I18N.t('energy_deficit', (pwr.ratio * 100) | 0); st.style.color = 'var(--red)'; }
     document.getElementById('hdr-power').textContent = `${this.fmt(pwr.produced)} / ${this.fmt(pwr.consumed)} MW`;
+    if (powerOn && document.getElementById('lp-energy').checked) this.renderPowerGraph();
 
     document.getElementById('hdr-launches').textContent = s.launches;
     document.getElementById('hdr-bonus').textContent = '×' + s.launchBonus.toFixed(1);
@@ -510,6 +552,61 @@ export const UI = {
 
     this.checkRocket();
     if (document.getElementById('rp-stats').checked) this.renderSparks(false);
+  },
+
+  /* ---------------- electricity statistics ---------------- */
+  // generation history in the ENERGY panel — two series (produced vs consumed MW)
+  // sharing the same time-window selection as the production graphs.
+  renderPowerGraph() {
+    const host = document.getElementById('power-list'); if (!host) return;
+    if (!host.dataset.built) {
+      host.innerHTML =
+        `<div class="spark">
+           <span class="lbl">⚡ ${I18N.t('energy_history')}</span>
+           <canvas id="spark-power" height="48"></canvas>
+           <span class="spark-leg" id="leg-power"></span>
+         </div>`;
+      host.dataset.built = '1';
+    }
+    this.drawPower();
+  },
+  drawPower() {
+    const s = GameState.state;
+    const buf = s.stats.buf[s.stats.win] || {};
+    const prod = buf.__pProd || [], cons = buf.__pCons || [];
+    const c = document.getElementById('spark-power'); if (!c) return;
+
+    const leg = document.getElementById('leg-power');
+    if (leg) {
+      const p = prod.length ? prod[prod.length - 1] : 0;
+      const q = cons.length ? cons[cons.length - 1] : 0;
+      leg.innerHTML =
+          `<span class="lg-rate pos">${this.fmt(p)} MW ${I18N.t('energy_prod_leg')}</span>`
+        + `<span class="lg-rate neg">${this.fmt(q)} MW ${I18N.t('energy_cons_leg')}</span>`;
+    }
+
+    const w = c.clientWidth || 600; if (c.width !== w) c.width = w;
+    const ctx = c.getContext('2d'), h = c.height, pad = 3;
+    ctx.clearRect(0, 0, c.width, h);
+
+    let max = 0;
+    for (const v of prod) if (v > max) max = v;
+    for (const v of cons) if (v > max) max = v;
+    max = Math.max(1e-9, max);
+    const yOf = v => h - pad - (v / max) * (h - 2 * pad);
+
+    ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, yOf(0)); ctx.lineTo(c.width, yOf(0)); ctx.stroke();
+
+    for (const [data, col] of [[prod, '#39d353'], [cons, '#e5534b']]) {
+      if (data.length < 2) continue;
+      ctx.beginPath();
+      data.forEach((v, i) => {
+        const x = i / (data.length - 1) * c.width;
+        i ? ctx.lineTo(x, yOf(v)) : ctx.moveTo(x, yOf(v));
+      });
+      ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.stroke();
+    }
   },
 
   /* ---------------- statistics ---------------- */
@@ -550,6 +647,16 @@ export const UI = {
         i ? ctx.lineTo(x, yOf(v)) : ctx.moveTo(x, yOf(v));
       });
       ctx.strokeStyle = RESOURCES[k].color; ctx.lineWidth = 1.5; ctx.stroke();
+
+      // endpoint labels: left = oldest stored sample, right = current value
+      ctx.font = '10px var(--mono, monospace)';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = '#7a7a7a';
+      ctx.textAlign = 'left';
+      ctx.fillText(this.fmtDelta(data[0]) + '/s', pad, pad);
+      ctx.fillStyle = '#c8c8c8';
+      ctx.textAlign = 'right';
+      ctx.fillText(this.fmtDelta(data[data.length - 1]) + '/s', c.width - pad, pad);
     }
   },
   updateTotals() {

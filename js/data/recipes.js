@@ -1,6 +1,10 @@
 // data/recipes.js — AUTO-GENERATED from Factorio base data by tools/extract.py.
 // inputs: consumed per craft · out: produced · time: seconds · cat: building category.
 export const RECIPES = {
+  // HAND-ADDED (not from extract.py): boilers burn coal to turn water into steam
+  // (a fluid). Steam engines then consume steam to generate power. Only the boiler
+  // building lists this recipe, so assemblers never make it.
+  steam:                   {out:4, time:1.0, inputs:{water:1, coal:1}, cat:'boiler'},
   copperPlate:             {out:1, time:3.2, inputs:{copperOre:1}, cat:'smelt'},
   heavyOil:                {out:1, time:5, inputs:{crudeOil:1}, cat:'chem', tech:'oilProcessing'},
   ironPlate:               {out:1, time:3.2, inputs:{ironOre:1}, cat:'smelt'},
@@ -13,7 +17,7 @@ export const RECIPES = {
   uranium238:              {out:1, time:12.0, inputs:{uraniumOre:10}, cat:'centrifuge'},
   woodenChest:             {out:1, time:0.5, inputs:{wood:2}, cat:'craft'},
   concrete:                {out:10, time:10.0, inputs:{stoneBrick:5, ironOre:1, water:100}, cat:'craft', tech:'concrete'},
-  copperCable:             {out:2, time:0.5, inputs:{copperPlate:1}, cat:'craft', tech:'electronics'},
+  copperCable:             {out:2, time:0.5, inputs:{copperPlate:1}, cat:'craft'},
   firearmMagazine:         {out:1, time:1.0, inputs:{ironPlate:4}, cat:'craft'},
   grenade:                 {out:1, time:8.0, inputs:{ironPlate:5, coal:10}, cat:'craft', tech:'military2'},
   ironChest:               {out:1, time:0.5, inputs:{ironPlate:8}, cat:'craft'},
@@ -21,7 +25,7 @@ export const RECIPES = {
   ironStick:               {out:2, time:0.5, inputs:{ironPlate:1}, cat:'craft', tech:'railway'},
   lightArmor:              {out:1, time:3.0, inputs:{ironPlate:40}, cat:'craft'},
   lubricant:               {out:1, time:1, inputs:{heavyOil:1}, cat:'chem', tech:'lubricant'},
-  pipe:                    {out:1, time:0.5, inputs:{ironPlate:1}, cat:'craft', tech:'steamPower'},
+  pipe:                    {out:1, time:0.5, inputs:{ironPlate:1}, cat:'craft'},
   pistol:                  {out:1, time:5.0, inputs:{copperPlate:5, ironPlate:5}, cat:'craft'},
   plasticBar:              {out:2, time:1.0, inputs:{petroleumGas:20, coal:1}, cat:'chem', tech:'plastics'},
   shotgunShell:            {out:1, time:3.0, inputs:{copperPlate:2, ironPlate:2}, cat:'craft', tech:'military'},
@@ -33,12 +37,12 @@ export const RECIPES = {
   automationScience:       {out:1, time:5.0, inputs:{copperPlate:1, ironGearWheel:1}, cat:'craft', tech:'automationScience'},
   barrel:                  {out:1, time:1.0, inputs:{steelPlate:1}, cat:'craft', tech:'fluidHandling'},
   bigElectricPole:         {out:1, time:0.5, inputs:{ironStick:8, steelPlate:5, copperCable:4}, cat:'craft', tech:'electricEnergyDistribution1'},
-  boiler:                  {out:1, time:0.5, inputs:{stoneFurnace:1, pipe:4}, cat:'craft', tech:'steamPower'},
+  boiler:                  {out:1, time:0.5, inputs:{stoneFurnace:1, pipe:4}, cat:'craft'},
   burnerInserter:          {out:1, time:0.5, inputs:{ironPlate:1, ironGearWheel:1}, cat:'craft'},
   burnerMiningDrill:       {out:1, time:2.0, inputs:{ironGearWheel:3, stoneFurnace:1, ironPlate:3}, cat:'craft'},
   cargoWagon:              {out:1, time:1.0, inputs:{ironGearWheel:10, ironPlate:20, steelPlate:20}, cat:'craft', tech:'railway'},
   combatShotgun:           {out:1, time:10.0, inputs:{steelPlate:15, ironGearWheel:5, copperPlate:10, wood:10}, cat:'craft', tech:'military3'},
-  electronicCircuit:       {out:1, time:0.5, inputs:{ironPlate:1, copperCable:3}, cat:'craft', tech:'electronics'},
+  electronicCircuit:       {out:1, time:0.5, inputs:{ironPlate:1, copperCable:3}, cat:'craft'},
   engineUnit:              {out:1, time:10.0, inputs:{steelPlate:1, ironGearWheel:1, pipe:2}, cat:'craft', tech:'engine'},
   explosives:              {out:2, time:4.0, inputs:{sulfur:1, coal:1, water:10}, cat:'chem', tech:'explosives'},
   flamethrower:            {out:1, time:10.0, inputs:{steelPlate:5, ironGearWheel:10}, cat:'craft', tech:'flamethrower'},
@@ -50,16 +54,16 @@ export const RECIPES = {
   heavyArmor:              {out:1, time:8.0, inputs:{copperPlate:100, steelPlate:50}, cat:'craft', tech:'heavyArmor'},
   lowDensityStructure:     {out:1, time:15.0, inputs:{steelPlate:2, copperPlate:20, plasticBar:5}, cat:'craft', tech:'lowDensityStructure'},
   mediumElectricPole:      {out:1, time:0.5, inputs:{ironStick:4, steelPlate:2, copperCable:2}, cat:'craft', tech:'electricEnergyDistribution1'},
-  offshorePump:            {out:1, time:0.5, inputs:{pipe:3, ironGearWheel:2}, cat:'craft', tech:'steamPower'},
+  offshorePump:            {out:1, time:0.5, inputs:{pipe:3, ironGearWheel:2}, cat:'craft'},
   piercingRoundsMagazine:  {out:2, time:6.0, inputs:{firearmMagazine:2, steelPlate:1, copperPlate:2}, cat:'craft', tech:'military2'},
   piercingShotgunShell:    {out:1, time:8.0, inputs:{shotgunShell:2, copperPlate:5, steelPlate:2}, cat:'craft', tech:'military4'},
-  pipeToGround:            {out:2, time:0.5, inputs:{pipe:10, ironPlate:5}, cat:'craft', tech:'steamPower'},
+  pipeToGround:            {out:2, time:0.5, inputs:{pipe:10, ironPlate:5}, cat:'craft'},
   rail:                    {out:2, time:0.5, inputs:{stone:1, ironStick:1, steelPlate:1}, cat:'craft', tech:'railway'},
   refinedConcrete:         {out:10, time:15.0, inputs:{concrete:20, ironStick:8, steelPlate:1, water:100}, cat:'craft', tech:'concrete'},
   rocketFuel:              {out:1, time:15.0, inputs:{solidFuel:10, lightOil:10}, cat:'craft', tech:'rocketFuel'},
   shotgun:                 {out:1, time:10.0, inputs:{ironPlate:15, ironGearWheel:5, copperPlate:10, wood:5}, cat:'craft', tech:'military'},
   smallElectricPole:       {out:2, time:0.5, inputs:{wood:1, copperCable:2}, cat:'craft', tech:'electronics'},
-  steamEngine:             {out:1, time:0.5, inputs:{ironGearWheel:8, pipe:5, ironPlate:10}, cat:'craft', tech:'steamPower'},
+  steamEngine:             {out:1, time:0.5, inputs:{ironGearWheel:8, pipe:5, ironPlate:10}, cat:'craft'},
   steamTurbine:            {out:1, time:3.0, inputs:{ironGearWheel:50, copperPlate:50, pipe:20}, cat:'craft', tech:'nuclearPower'},
   steelChest:              {out:1, time:0.5, inputs:{steelPlate:8}, cat:'craft', tech:'steelProcessing'},
   steelFurnace:            {out:1, time:3.0, inputs:{steelPlate:6, stoneBrick:10}, cat:'craft', tech:'advancedMaterialProcessing'},
@@ -91,7 +95,7 @@ export const RECIPES = {
   lab:                     {out:1, time:2.0, inputs:{electronicCircuit:10, ironGearWheel:10, transportBelt:4}, cat:'craft', tech:'electronics'},
   landMine:                {out:4, time:5.0, inputs:{steelPlate:1, explosives:2}, cat:'craft', tech:'landMine'},
   locomotive:              {out:1, time:4.0, inputs:{engineUnit:20, electronicCircuit:10, steelPlate:30}, cat:'craft', tech:'railway'},
-  militaryScience:         {out:2, time:10.0, inputs:{piercingRoundsMagazine:1, grenade:1, stoneWall:2}, cat:'craft', tech:'militaryScience'},
+  militaryScience:         {out:2, time:10.0, inputs:{piercingRoundsMagazine:1, grenade:1, stoneBrick:10}, cat:'craft', tech:'militaryScience'},
   nuclearFuel:             {out:1, time:90.0, inputs:{uranium235:1, rocketFuel:1}, cat:'centrifuge', tech:'kovarexEnrichmentProcess'},
   oilRefinery:             {out:1, time:8.0, inputs:{steelPlate:15, ironGearWheel:10, stoneBrick:10, electronicCircuit:10, pipe:10}, cat:'craft', tech:'oilProcessing'},
   poisonCapsule:           {out:1, time:8.0, inputs:{steelPlate:3, electronicCircuit:3, coal:10}, cat:'craft', tech:'military3'},
@@ -137,7 +141,6 @@ export const RECIPES = {
   fastUndergroundBelt:     {out:2, time:2.0, inputs:{ironGearWheel:40, undergroundBelt:2}, cat:'craft', tech:'logistics2'},
   flyingRobotFrame:        {out:1, time:20.0, inputs:{electricEngineUnit:1, battery:2, steelPlate:1, electronicCircuit:3}, cat:'craft', tech:'robotics'},
   laserTurret:             {out:1, time:20.0, inputs:{steelPlate:20, electronicCircuit:20, battery:12}, cat:'craft', tech:'laserTurret'},
-  loader:                  {out:1, time:1.0, inputs:{inserter:5, electronicCircuit:5, ironGearWheel:5, ironPlate:5, transportBelt:5}, cat:'craft'},
   logisticScience:         {out:1, time:6.0, inputs:{ironGearWheel:2, electronicCircuit:1, ironPlate:1}, cat:'craft', tech:'logisticScience'},
   longHandedInserter:      {out:1, time:0.5, inputs:{ironGearWheel:1, ironPlate:1, inserter:1}, cat:'craft', tech:'automation'},
   modularArmor:            {out:1, time:15.0, inputs:{advancedCircuit:30, steelPlate:50}, cat:'craft', tech:'modularArmor'},
@@ -169,13 +172,12 @@ export const RECIPES = {
   exoskeletonEquipment:    {out:1, time:10.0, inputs:{processingUnit:10, electricEngineUnit:30, steelPlate:20}, cat:'craft', tech:'exoskeletonEquipment'},
   expressSplitter:         {out:1, time:2.0, inputs:{fastSplitter:1, ironGearWheel:10, advancedCircuit:10, lubricant:80}, cat:'craft', tech:'logistics3'},
   expressUndergroundBelt:  {out:2, time:2.0, inputs:{ironGearWheel:80, fastUndergroundBelt:2, lubricant:40}, cat:'craft', tech:'logistics3'},
-  fastLoader:              {out:1, time:3.0, inputs:{fastTransportBelt:5, loader:1}, cat:'craft'},
   fissionReactorEquipment: {out:1, time:10.0, inputs:{processingUnit:200, lowDensityStructure:50, uraniumFuelCell:4}, cat:'craft', tech:'fissionReactorEquipment'},
   logisticRobot:           {out:1, time:0.5, inputs:{flyingRobotFrame:1, advancedCircuit:2}, cat:'craft', tech:'logisticRobotics'},
   personalLaserDefenseEquipment: {out:1, time:10.0, inputs:{processingUnit:20, lowDensityStructure:5, laserTurret:5}, cat:'craft', tech:'personalLaserDefenseEquipment'},
   personalRoboportMk2Equipment: {out:1, time:20.0, inputs:{personalRoboportEquipment:5, processingUnit:100, lowDensityStructure:20}, cat:'craft', tech:'personalRoboportMk2Equipment'},
   powerArmor:              {out:1, time:20.0, inputs:{processingUnit:40, electricEngineUnit:20, steelPlate:40}, cat:'craft', tech:'powerArmor'},
-  productionScience:       {out:3, time:21.0, inputs:{electricFurnace:1, advancedCircuit:5, electronicCircuit:5, rail:30}, cat:'craft', tech:'productionScience'},
+  productionScience:       {out:3, time:21.0, inputs:{advancedCircuit:10, electronicCircuit:5, steelPlate:10, stoneBrick:10, rail:30}, cat:'craft', tech:'productionScience'},
   productivityModule2:     {out:1, time:30.0, inputs:{productivityModule:4, advancedCircuit:5, processingUnit:5}, cat:'craft', tech:'productivityModule2'},
   rocketPart:              {out:1, time:3.0, inputs:{processingUnit:10, lowDensityStructure:10, rocketFuel:10}, cat:'craft', tech:'rocketSilo'},
   rocketSilo:              {out:1, time:30.0, inputs:{steelPlate:1000, concrete:1000, pipe:100, processingUnit:200, electricEngineUnit:200}, cat:'craft', tech:'rocketSilo'},
@@ -183,9 +185,18 @@ export const RECIPES = {
   speedModule2:            {out:1, time:30.0, inputs:{speedModule:4, advancedCircuit:5, processingUnit:5}, cat:'craft', tech:'speedModule2'},
   utilityScience:          {out:3, time:21.0, inputs:{lowDensityStructure:3, processingUnit:2, flyingRobotFrame:1}, cat:'craft', tech:'utilityScience'},
   efficiencyModule3:       {out:1, time:60.0, inputs:{efficiencyModule2:4, advancedCircuit:5, processingUnit:5}, cat:'craft', tech:'efficiencyModule3'},
-  expressLoader:           {out:1, time:10.0, inputs:{expressTransportBelt:5, fastLoader:1}, cat:'craft'},
   powerArmorMk2:           {out:1, time:25.0, inputs:{efficiencyModule2:25, speedModule2:25, processingUnit:60, electricEngineUnit:40, lowDensityStructure:30}, cat:'craft', tech:'powerArmorMk2'},
   productivityModule3:     {out:1, time:60.0, inputs:{productivityModule2:4, advancedCircuit:5, processingUnit:5}, cat:'craft', tech:'productivityModule3'},
   speedModule3:            {out:1, time:60.0, inputs:{speedModule2:4, advancedCircuit:5, processingUnit:5}, cat:'craft', tech:'speedModule3'},
   spidertron:              {out:1, time:10.0, inputs:{exoskeletonEquipment:4, fissionReactorEquipment:2, rocketLauncher:4, processingUnit:16, lowDensityStructure:150, radar:2, efficiencyModule3:2, rawFish:1}, cat:'craft', tech:'spidertron'},
 };
+
+// HAND-MAINTAINED (not regenerated by extract.py): personal weapons and armor that
+// must be hand-crafted only — assembling machines can't build them. Ammunition
+// (magazines / shells / shotgun shells / rockets / grenades) is deliberately NOT
+// listed: it stays assembler-craftable. If you add a new gun/armor recipe above,
+// add its key here too.
+export const HANDCRAFT_ONLY = new Set([
+  'pistol', 'submachineGun', 'shotgun', 'combatShotgun', 'flamethrower', 'rocketLauncher',
+  'lightArmor', 'heavyArmor', 'modularArmor', 'powerArmor', 'powerArmorMk2',
+]);

@@ -6,7 +6,7 @@ export const NAMES_RU = {
   // ---- resources / items ----
   coal: 'Уголь', copperOre: 'Медная руда', crudeOil: 'Сырая нефть',
   depletedUraniumFuelCell: 'Отработанный урановый ТВЭЛ', ironOre: 'Железная руда',
-  rawFish: 'Рыба', stone: 'Камень', uraniumOre: 'Урановая руда', water: 'Вода', wood: 'Древесина',
+  rawFish: 'Рыба', stone: 'Камень', steam: 'Пар', uraniumOre: 'Урановая руда', water: 'Вода', wood: 'Древесина',
   copperPlate: 'Медная пластина', heavyOil: 'Тяжёлая нефть', ironPlate: 'Железная пластина',
   landfill: 'Насыпь', lightOil: 'Лёгкая нефть', petroleumGas: 'Нефтяной газ',
   stoneBrick: 'Каменный кирпич', stoneFurnace: 'Каменная печь', uranium235: 'Уран-235',
@@ -57,7 +57,7 @@ export const NAMES_RU = {
   explosiveUraniumCannonShell: 'Фугасный урановый снаряд', expressTransportBelt: 'Экспресс-конвейер',
   fastInserter: 'Быстрый манипулятор', fastSplitter: 'Быстрый разделитель',
   fastUndergroundBelt: 'Быстрый подземный конвейер', flyingRobotFrame: 'Каркас летающего робота',
-  laserTurret: 'Лазерная турель', loader: 'Загрузчик', logisticScience: 'Набор логистических исследований',
+  laserTurret: 'Лазерная турель', logisticScience: 'Набор логистических исследований',
   longHandedInserter: 'Длинный манипулятор', modularArmor: 'Модульная броня',
   nightVisionEquipment: 'Прибор ночного видения', nuclearReactor: 'Ядерный реактор',
   passiveProviderChest: 'Пассивный сундук-поставщик', personalRoboportEquipment: 'Личный робопорт',
@@ -71,13 +71,13 @@ export const NAMES_RU = {
   destroyerCapsule: 'Капсула-разрушитель', dischargeDefenseEquipment: 'Разрядная защита',
   efficiencyModule2: 'Модуль экономии 2', energyShieldMk2Equipment: 'Энергощит Mk2',
   exoskeletonEquipment: 'Экзоскелет', expressSplitter: 'Экспресс-разделитель',
-  expressUndergroundBelt: 'Экспресс подземный конвейер', fastLoader: 'Быстрый загрузчик',
+  expressUndergroundBelt: 'Экспресс подземный конвейер',
   fissionReactorEquipment: 'Переносной ядерный реактор', logisticRobot: 'Логистический робот',
   personalLaserDefenseEquipment: 'Личная лазерная защита', personalRoboportMk2Equipment: 'Личный робопорт Mk2',
   powerArmor: 'Силовая броня', productionScience: 'Набор производственных исследований',
   productivityModule2: 'Модуль продуктивности 2', rocketPart: 'Часть ракеты', rocketSilo: 'Ракетная шахта',
   satellite: 'Спутник', speedModule2: 'Модуль скорости 2', utilityScience: 'Набор сервисных исследований',
-  efficiencyModule3: 'Модуль экономии 3', expressLoader: 'Экспресс-загрузчик', powerArmorMk2: 'Силовая броня Mk2',
+  efficiencyModule3: 'Модуль экономии 3', powerArmorMk2: 'Силовая броня Mk2',
   productivityModule3: 'Модуль продуктивности 3', speedModule3: 'Модуль скорости 3', spidertron: 'Спайдертрон',
 
   // ---- building-only keys (don't overlap with item keys) ----

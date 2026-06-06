@@ -27,6 +27,10 @@ export const MapView = {
   mining: false,           // hold-to-mine ore by hand
   mineRAF: null, mineLastTs: 0, mineAccum: 0,
   MINE_RATE: 5,            // ore mined per second by hand
+  // hold-to-clear obstacle (tree/rock): swing a pickaxe for OB_MINE_SEC seconds
+  obMine: null,            // {x, y, prog} active obstacle-clear hold (prog 0..1), or null
+  obMineRAF: null, obMineLastTs: 0,
+  OB_MINE_SEC: 2,          // seconds of holding to clear one tree/rock
 
   init() {
     this.canvas = document.getElementById('map-canvas');
@@ -172,6 +176,10 @@ export const MapView = {
       if (e.button === 0 && this.place === null && !ent && this.handMineable(t.x, t.y)) {
         this.startMining(); return;
       }
+      // left-click on a tree/rock (no entity, not placing) ⇒ hold the pickaxe to clear it
+      if (e.button === 0 && this.place === null && !ent && GameState.obstacleAt(t.x, t.y)) {
+        this.startObMine(t.x, t.y); return;
+      }
       if (this.mode === 'factory' && (e.button === 1 || (e.button === 0 && this.place === null && !ent))) {
         this.drag = { startY: e.clientY, startCam: this.camPy }; this.dragMoved = false;
       }
@@ -182,7 +190,7 @@ export const MapView = {
         this.camPy = Math.max(0, this.drag.startCam - (e.clientY - this.drag.startY)); this.render(); return;
       }
     });
-    window.addEventListener('mouseup', () => { this.drag = null; this.stopMining(); });
+    window.addEventListener('mouseup', () => { this.drag = null; this.stopMining(); this.stopObMine(); });
     c.addEventListener('mousemove', (e) => {
       const t = this.toTile(e); this.hover = { x: t.x, y: t.y, inside: true }; this.render();
     });
@@ -191,7 +199,7 @@ export const MapView = {
       if (this.dragMoved) { this.dragMoved = false; return; }   // ignore the click that ends a pan
       const t = this.toTile(e);
       if (this.place) this.tryPlace(t.x, t.y);
-      else if (GameState.obstacleAt(t.x, t.y)) this.clearObstacle(t.x, t.y);
+      else if (GameState.obstacleAt(t.x, t.y)) { /* trees/rocks are cleared by holding the pickaxe (startObMine), not an instant click */ }
       else this.selectAt(t.x, t.y);
     });
     c.addEventListener('contextmenu', (e) => {
@@ -230,6 +238,15 @@ export const MapView = {
       if (o && o !== 'crudeOil') return o;
     }
     return null;
+  },
+  // all distinct drill-mineable ores under the footprint (for the inspector's ore picker)
+  oresUnder(x, y, w = 2, h = 2) {
+    const out = [];
+    for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) {
+      const o = MapGen.oreAt(GameState.state.map, x + dx, y + dy);
+      if (o && o !== 'crudeOil' && !out.includes(o)) out.push(o);
+    }
+    return out;
   },
   oilUnder(x, y, w = 2, h = 2) {   // true if any crude-oil tile is under the footprint
     for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) {
@@ -270,7 +287,7 @@ export const MapView = {
     let recipe = null;
     if (def.place === 'ore')      recipe = this.oreUnder(x, y, def.w || 2, def.h || 2);   // drill ⇒ ore beneath
     else if (def.recipes && def.recipes.length)                          // default to first unlocked, non-upgrade recipe
-      recipe = def.recipes.find(r => GameState.recipeUnlocked(r) && !GameState.isUpgradeItem(r)) || null;
+      recipe = def.recipes.find(r => GameState.recipeUnlocked(r) && !GameState.isUpgradeItem(r) && !GameState.isBuildingItem(r) && !GameState.isHandcraftItem(r)) || null;
     GameState.state.entities.push({ id: GameState.nextId++, type, x, y, recipe, modules: [], _progress: 0 });
     window.UI.renderDynamic();
     this.render();
@@ -328,6 +345,42 @@ export const MapView = {
     this.mining = false;
     if (this.mineRAF) cancelAnimationFrame(this.mineRAF);
     this.mineRAF = null;
+    this.render();
+  },
+
+  /* ---------- hold-to-clear obstacles (tree/rock) ---------- */
+  startObMine(x, y) {
+    if (this.obMine || !GameState.obstacleAt(x, y)) return;
+    this.obMine = { x, y, prog: 0 };
+    this.obMineLastTs = performance.now();
+    const loop = (ts) => {
+      if (!this.obMine) return;
+      const dt = Math.min(0.25, (ts - this.obMineLastTs) / 1000);
+      this.obMineLastTs = ts;
+      // cancel if the cursor wandered off the target tile or left the canvas
+      if (!this.hover.inside || this.hover.x !== this.obMine.x || this.hover.y !== this.obMine.y) {
+        this.stopObMine(); return;
+      }
+      this.obMine.prog += dt / this.OB_MINE_SEC;
+      if (this.obMine.prog >= 1) {                       // held long enough ⇒ clear it
+        const { x, y } = this.obMine;
+        this.obMine = null;
+        if (this.obMineRAF) cancelAnimationFrame(this.obMineRAF);
+        this.obMineRAF = null;
+        this.clearObstacle(x, y);
+        return;
+      }
+      this.render();
+      this.obMineRAF = requestAnimationFrame(loop);
+    };
+    this.obMineRAF = requestAnimationFrame(loop);
+    this.render();
+  },
+  stopObMine() {
+    if (!this.obMine) return;
+    this.obMine = null;
+    if (this.obMineRAF) cancelAnimationFrame(this.obMineRAF);
+    this.obMineRAF = null;
     this.render();
   },
 
@@ -513,6 +566,25 @@ export const MapView = {
       const ang = Math.sin(performance.now() / 80) * 0.6 - 0.3;
       ctx.save();
       ctx.translate(sx + TILE / 2, sy + TILE / 2);
+      ctx.rotate(ang);
+      ctx.font = '26px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('⛏', 0, -2);
+      ctx.restore();
+    }
+
+    // hold-to-clear: swinging pickaxe + a filling progress ring over the tree/rock
+    if (this.obMine) {
+      const cx = this.obMine.x * TILE + TILE / 2, cy = this.obMine.y * TILE + TILE / 2 - this.camPy;
+      const R = TILE * 0.42;
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = '#ffcf3f';
+      ctx.beginPath(); ctx.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + this.obMine.prog * Math.PI * 2); ctx.stroke();
+      ctx.lineWidth = 1;
+      const ang = Math.sin(performance.now() / 80) * 0.6 - 0.3;
+      ctx.save();
+      ctx.translate(cx, cy);
       ctx.rotate(ang);
       ctx.font = '26px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('⛏', 0, -2);

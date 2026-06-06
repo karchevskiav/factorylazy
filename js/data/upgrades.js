@@ -20,7 +20,7 @@ export const STORAGE_BASE = BALANCE.storageBase;   // SOLID-resource cap base (s
 export const FLUID_BASE   = BALANCE.fluidBase;     // FLUID cap base — raised only by the storage tank
 
 // fluids share their own cap track (chests don't help them; only the storage tank does)
-export const FLUIDS = new Set(['crudeOil', 'water', 'heavyOil', 'lightOil', 'petroleumGas', 'lubricant', 'sulfuricAcid']);
+export const FLUIDS = new Set(['crudeOil', 'water', 'heavyOil', 'lightOil', 'petroleumGas', 'lubricant', 'sulfuricAcid', 'steam']);
 
 export const UPGRADES = {
   // ---- manipulators → SPEED ------------------------------------------------

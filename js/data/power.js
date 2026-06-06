@@ -2,7 +2,7 @@
 // mw: produced megawatts · fuel/fuelPerSec: consumption from the shared pool (null = free).
 export const POWER = {
   steamEngine: {name:'Steam Engine', icon:'♨', img:'assets/buildings/steamEngine.png', color:'#3a3a3a', place:'land', w:5, h:3,
-                mw:5, fuel:'coal', fuelPerSec:0.5, baseCost:{ironPlate:8,stone:5}, costMul:1.16, unlock:'steamPower'},
+                mw:5, fuel:'steam', fuelPerSec:2, baseCost:{ironPlate:8,stone:5}, costMul:1.16, unlock:null},
   solarPanel:  {name:'Solar Panel',  icon:'☀', img:'assets/buildings/solarPanel.png', color:'#3a3a3a', place:'land', w:3, h:3,
                 mw:3, fuel:null,  fuelPerSec:0,   baseCost:{electronicCircuit:6,copperPlate:10}, costMul:1.2, unlock:'solarEnergy'},
   accumulator: {name:'Accumulator', icon:'🔋', img:'assets/buildings/accumulator.png', color:'#3a3a3a', place:'land', w:2, h:2,

@@ -1,7 +1,7 @@
 // gameState.js — owns the mutable game state and derived helpers.
 import { RESOURCES } from './data/resources.js';
-import { RECIPES }   from './data/recipes.js';
-import { BUILDINGS } from './data/buildings.js';
+import { RECIPES, HANDCRAFT_ONLY } from './data/recipes.js';
+import { BUILDINGS, BUILDING_ITEMS } from './data/buildings.js';
 import { POWER }     from './data/power.js';
 import { TECH }      from './data/tech.js';
 import { MODULES }   from './data/modules.js';
@@ -43,8 +43,9 @@ export const GameState = {
       },
     };
     for (const k in RESOURCES) { s.resources[k] = 0; }
-    // a small starting hand so the first drill + furnace can be built
-    s.resources.ironPlate = 20;
+    // a starting hand so the first drills + furnaces can be built
+    s.resources.ironPlate = 100;
+    s.resources.copperPlate = 100;
     s.resources.stone = 10;
     this.state = s;
     this.nextId = 1;
@@ -114,6 +115,12 @@ export const GameState = {
   // true if this item is a manual-craft bonus upgrade — such items must NOT be
   // produced by assemblers (they only exist as ranks bought in the craft window).
   isUpgradeItem(key) { return !!UPGRADES[key]; },
+  // true if this item is a placeable structure (BUILDINGS/POWER) — such items are
+  // built on the map via baseCost, so assemblers must NOT mass-produce them.
+  isBuildingItem(key) { return BUILDING_ITEMS.has(key); },
+  // true if this item is a personal weapon or armor — these are hand-crafted only,
+  // so assemblers must NOT mass-produce them (ammo/shells are still allowed).
+  isHandcraftItem(key) { return HANDCRAFT_ONLY.has(key); },
   upgradeRank(id) { return (this.state.upgrades && this.state.upgrades[id]) || 0; },
   // an upgrade item can be ranked up once its (resource) recipe is researched
   upgradeUnlocked(id) { return !!UPGRADES[id] && this.recipeUnlocked(id); },

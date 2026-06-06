@@ -1,5 +1,5 @@
  // config.js — tunable constants for the engine and economy.
-export const TICK_MS    = 200;          // 5 ticks per second
+export const TICK_MS    = 50;           // 20 ticks per second (finer steps ⇒ smoother progress bars)
 export const TICK_SEC   = TICK_MS / 1000;
 export const SAVE_KEY   = 'factorio_idle_save';
 export const SAVE_EVERY = 10000;        // autosave interval (ms)
@@ -28,5 +28,10 @@ export const BALANCE = {
   minEnergyFactor: 0.1,   // floor on a machine's energy draw after efficiency modules
   beaconEffect:    0.5,   // fraction of a module's effect a beacon transmits (vanilla = half)
   researchSeconds: 8,     // seconds of lab throughput that fund one full unit of research cost
+  labCraftSec:     2,     // base seconds for one lab research cycle (one progress-bar fill)
   rocketBonus:     1.5,   // permanent production multiplier per rocket launched (prestige)
+  // per-category craft-speed multiplier. Extractors (mine/oil/pump) keep ore output
+  // unchanged; assemblers (craft) and furnaces (smelt) run at half speed; labs run at
+  // half speed too (slower, deliberate research). Any cat not listed here defaults to 1.
+  catSpeed: { craft: 0.5, smelt: 0.5, lab: 0.5 },
 };
