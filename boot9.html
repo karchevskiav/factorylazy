@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Factorio Idle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1 data-i18n="title">⚙ FACTORIO IDLE</h1>
+    <span class="badge"><span data-i18n="hdr_rockets">ROCKETS</span>&nbsp;<b id="hdr-launches">0</b></span>
+    <span class="badge"><span data-i18n="hdr_bonus">BONUS</span>&nbsp;<b id="hdr-bonus">×1.0</b></span>
+    <span class="badge" id="hdr-prestige-badge" hidden title="Prestige (permanent)">★&nbsp;<b id="hdr-prestige">0</b></span>
+    <span class="badge" id="hdr-pollution-badge" title="Pollution → biter waves">☁&nbsp;<b id="hdr-pollution">0</b></span>
+    <div class="spacer"></div>
+    <span class="badge" id="hdr-power-badge" hidden><span data-i18n="hdr_pwr">PWR</span>&nbsp;<b id="hdr-power">0 / 0 MW</b></span>
+    <button id="lang-btn" onclick="UI.cycleLang()">🌐 EN</button>
+    <button data-i18n="reset" onclick="UI.confirmHardReset()">RESET</button>
+  </header>
+
+  <main>
+    <!-- left sidebar: 6 radio-driven tabs (don't affect the map) -->
+    <input type="radio" name="lpane" id="lp-resources" checked>
+    <input type="radio" name="lpane" id="lp-build">
+    <input type="radio" name="lpane" id="lp-craft">
+    <input type="radio" name="lpane" id="lp-research">
+    <input type="radio" name="lpane" id="lp-bonus">
+    <input type="radio" name="lpane" id="lp-energy">
+    <input type="radio" name="lpane" id="lp-leaderboard">
+
+    <aside class="sidebar">
+      <nav class="lnav">
+        <label for="lp-resources"><span class="li">📦</span><span class="lt" data-i18n="ltab_resources">RES</span></label>
+        <label for="lp-build"><span class="li">🏗</span><span class="lt" data-i18n="ltab_build">BUILD</span></label>
+        <label for="lp-craft"><span class="li">🔧</span><span class="lt" data-i18n="ltab_craft">CRAFT</span></label>
+        <label for="lp-research" id="lnav-research"><span class="li">🔬</span><span class="lt" data-i18n="ltab_research">TECH</span></label>
+        <label for="lp-bonus"><span class="li">🏆</span><span class="lt" data-i18n="ltab_bonus">BONUS</span></label>
+        <label for="lp-energy" id="lnav-energy" hidden><span class="li">⚡</span><span class="lt" data-i18n="ltab_energy">PWR</span></label>
+        <label for="lp-leaderboard"><span class="li">🏅</span><span class="lt" data-i18n="ltab_leaderboard">TOP</span></label>
+      </nav>
+
+      <div class="lpanels">
+        <section class="lpanel" id="lpanel-resources">
+          <div class="section-title" data-i18n="sec_resources">📦 RESOURCES</div>
+          <div id="res-list"></div>
+        </section>
+
+        <section class="lpanel" id="lpanel-build">
+          <div class="section-title" data-i18n="sec_build">🏗 BUILD</div>
+          <div id="bld-palette" class="bld-palette"></div>
+        </section>
+
+        <section class="lpanel" id="lpanel-craft">
+          <div class="section-title" data-i18n="sec_craft">🔧 MANUAL CRAFT</div>
+          <div class="craft-hint dim" data-i18n="craft_hint">Craft items to permanently raise global bonuses — no map space needed.</div>
+          <div id="craft-list" class="craft-list"></div>
+        </section>
+
+        <section class="lpanel" id="lpanel-research">
+          <div class="section-title" data-i18n="sec_tech">🔬 TECHNOLOGY TREE — one research at a time</div>
+          <div class="tech-grid" id="tech-grid"></div>
+        </section>
+
+        <section class="lpanel" id="lpanel-bonus">
+          <div class="section-title" data-i18n="sec_bonus">🏆 BONUS</div>
+          <div id="bonus-body"></div>
+          <div id="rocket-host"></div>
+        </section>
+
+        <section class="lpanel" id="lpanel-energy">
+          <div class="section-title" data-i18n="sec_energy">⚡ ENERGY</div>
+          <div class="energy-meter">
+            <div class="energy-bar"><span id="energy-fill"></span></div>
+            <div class="energy-num">
+              <span id="energy-prod" class="ok">0</span> /
+              <span id="energy-cons">0</span> MW
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:4px;" id="energy-status">Nominal</div>
+          </div>
+          <div id="power-list"></div>
+        </section>
+
+        <section class="lpanel" id="lpanel-leaderboard">
+          <div class="section-title" data-i18n="sec_leaderboard">🏅 LEADERBOARD</div>
+          <div class="dim" data-i18n="leaderboard_soon">Coming soon</div>
+        </section>
+      </div>
+    </aside>
+
+    <!-- right stage: map / statistics toggle (map stays unless you pick stats) -->
+    <input type="radio" name="rpane" id="rp-map" checked>
+    <input type="radio" name="rpane" id="rp-stats">
+
+    <section class="stage">
+      <nav class="rnav">
+        <label for="rp-map" data-i18n="rtab_map">🗺 MAP</label>
+        <label for="rp-stats" data-i18n="rtab_stats">📊 STATISTICS</label>
+      </nav>
+
+      <div class="rpanel" id="rpanel-map">
+        <div class="section-title"><span data-i18n="sec_map">🏭 FACTORY MAP</span> <button id="war-btn" class="war-btn" onclick="MapView.toggleWar()" data-i18n="war_to_front">⚔ TO THE BITER FRONT</button> <span id="map-hint" class="map-hint" data-i18n="map_hint">— pick a building, click to place · drag to pan · right-click to remove</span></div>
+        <div id="map-wrap" class="map-wrap"><canvas id="map-canvas"></canvas></div>
+      </div>
+      <!-- building info pop-up (opened by clicking a placed building) -->
+      <div class="overlay hidden" id="inspector-overlay" onclick="if(event.target===this)UI.hideInspector()">
+        <div id="entity-inspector" class="entity-inspector modal"></div>
+      </div>
+
+      <div class="rpanel" id="rpanel-stats">
+        <div class="section-title" data-i18n="sec_prod">📈 PRODUCTION</div>
+        <div id="stat-window" class="stat-window"></div>
+        <div id="spark-list"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- save-detected modal -->
+<div class="overlay hidden" id="load-modal">
+  <div class="modal">
+    <h2 data-i18n="modal_save_h">SAVE DETECTED</h2>
+    <p data-i18n-html="modal_save_p">A previous factory was found in your browser.<br>Continue where you left off, or start fresh?</p>
+    <div class="btns">
+      <button class="accent" data-i18n="btn_continue" onclick="UI.continueGame()">CONTINUE</button>
+      <button data-i18n="btn_newgame" onclick="UI.newGameConfirm()">NEW GAME</button>
+    </div>
+  </div>
+</div>
+
+<!-- offline-progress modal -->
+<div class="overlay hidden" id="offline-modal">
+  <div class="modal">
+    <h2 data-i18n="modal_welcome_h">WELCOME BACK</h2>
+    <p id="offline-text"></p>
+    <div class="btns"><button class="accent" data-i18n="btn_collect" onclick="UI.closeOffline()">COLLECT</button></div>
+  </div>
+</div>
+
+<!-- game-over modal: the biters broke into the factory -->
+<div class="overlay hidden" id="gameover-modal">
+  <div class="modal modal-gameover">
+    <h2 id="gameover-title">☠ THE BITERS WIN AGAIN</h2>
+    <p id="gameover-quip" class="gameover-quip"></p>
+    <div id="gameover-stats" class="gameover-stats"></div>
+    <div class="btns"><button class="accent" id="gameover-btn" onclick="UI.restartAfterLoss()">REBUILD</button></div>
+  </div>
+</div>
+
+<!-- run-totals modal (shown on any reset: rocket launch or hard RESET) -->
+<div class="overlay hidden" id="totals-modal">
+  <div class="modal modal-wide">
+    <h2 data-i18n="modal_totals_h">RUN TOTALS</h2>
+    <div class="totals-scroll"><table class="stat-table" id="stat-table"></table></div>
+    <div class="btns"><button class="accent" data-i18n="btn_close" onclick="UI.closeTotals()">CLOSE</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module" src="js9/main.js"></script>
+</body>
+</html>
