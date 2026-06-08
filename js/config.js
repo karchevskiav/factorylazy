@@ -35,3 +35,36 @@ export const BALANCE = {
   // half speed too (slower, deliberate research). Any cat not listed here defaults to 1.
   catSpeed: { craft: 0.5, smelt: 0.5, lab: 0.5 },
 };
+
+// ---------------------------------------------------------------------------
+// WAR — biter assault on the war screen. The factory emits POLLUTION while it
+// works; once pollution passes `pollutionTrigger`, biters attack in waves whose
+// size and strength scale with how polluted the air is. They chew through anything
+// in the way (walls last) to reach the factory — the moment one crosses into the
+// factory the run ends. Gun turrets auto-reload firearm magazines from the pool.
+// ---------------------------------------------------------------------------
+export const WAR = {
+  pollutionTrigger: 45,      // pollution level at which the assault begins
+  absorbFlat:       1.2,     // pollution/sec nature absorbs (a small/burner factory stays clean)
+  pollutionMax:     900,     // cap so waves can't become literally infinite
+  emitPerEnergy:    0.30,    // pollution/sec per MW drawn by an active machine
+  emitBase:         0.10,    // pollution/sec per active machine (covers burners)
+  intensityScale:   130,     // pollution-over-trigger that equals one "intensity" unit
+
+  basePop:    4,             // biters on the field right at the trigger
+  popPerInt:  8,             // extra biters per intensity unit
+  maxPop:     70,
+  biterBaseHp:   20,
+  biterHpPerInt: 22,         // tougher biters as pollution climbs
+  biterSpeed:    1.0,
+  biterDps:       5,         // damage/sec a biter deals to a building it claws
+
+  wallHp:   220,
+  turretHp: 140,
+  turretRange:      7.5,     // tiles
+  turretDps:        40,      // damage/sec to the focused biter
+  turretAmmoMax:    20,      // magazines a turret holds
+  turretAmmoPerSec: 0.40,    // magazines burned per second of firing
+  prestigePerRun:   0.04,    // sqrt(items produced) × this = prestige points earned
+  prestigeBonus:    0.01,    // +1% global output per accumulated prestige point
+};

@@ -5,6 +5,7 @@ import { Production } from './production.js';
 import { Research }   from './research.js';
 import { Save }       from './save.js';
 import { MapView }    from './mapview.js';
+import { Biters }     from './biters.js';
 import { I18N }       from './i18n.js';
 import { RESOURCES }  from './data/resources.js';
 import { RECIPES }    from './data/recipes.js';
@@ -13,7 +14,7 @@ import { POWER }      from './data/power.js';
 import { MODULES }    from './data/modules.js';
 import { TECH }       from './data/tech.js';
 import { UPGRADES, UPGRADE_GROUPS } from './data/upgrades.js';
-import { TICK_MS, TICK_SEC, SAVE_EVERY, STAT_WINDOWS, OFFLINE_RATE, ROCKET_GOAL, BALANCE } from './config.js';
+import { TICK_MS, TICK_SEC, SAVE_EVERY, STAT_WINDOWS, OFFLINE_RATE, ROCKET_GOAL, BALANCE, WAR } from './config.js';
 
 export const UI = {
   loop: null, saveLoop: null, booted: false,
@@ -126,6 +127,7 @@ export const UI = {
     const { net, pwr } = Production.step(TICK_SEC, 1);
     this.lastNet = net; this.lastPwr = pwr;
     this.accumulateStats(net, pwr);
+    Biters.update(TICK_SEC);     // advance the war (movement, turrets, breaches) tab-independently
     this.renderDynamic();
   },
 
@@ -258,14 +260,18 @@ export const UI = {
       if (rec) {
         const ins = Object.entries(rec.inputs).map(([r, v]) => `${this.fmt(v)} ${this.ic(r, 16)}`).join(' + ') || '—';
         body += `<div class="insp-row dim">${ins} → ${this.fmt(rec.out)} ${this.ic(ent.recipe, 16)} (${rec.time}s)</div>`;
+        const st = this.prodStatus(ent, d, rec);
+        body += `<div class="insp-row insp-status ${st.cls}" id="insp-status-line">${st.text}</div>`;
       }
     } else if (d.cat === 'beacon') {
       body += `<div class="insp-row dim">${I18N.t('insp_beacon', d.radius)}</div>`;
     } else if (d.cat === 'lab') {
       body += `<div class="insp-row dim">${I18N.t('insp_lab')}</div>`;
     } else if (d.military) {
+      const mhp = GameState.maxHp(ent.type), hp = ent.hp == null ? mhp : Math.ceil(ent.hp);
       body += `<div class="insp-row dim">${ent.type === 'gunTurret'
-        ? I18N.t('insp_turret', ent.ammo || 0) : I18N.t('insp_wall')}</div>`;
+        ? I18N.t('insp_turret', Math.floor(ent.ammo || 0)) : I18N.t('insp_wall')}</div>`;
+      if (mhp) body += `<div class="insp-row dim">${I18N.t('insp_hp', hp, mhp)}</div>`;
     } else if (POWER[ent.type]) {
       body += `<div class="insp-row dim">${d.fuel
         ? I18N.t('insp_power_fuel', d.mw, d.fuelPerSec, this.rn(d.fuel))
@@ -290,6 +296,19 @@ export const UI = {
     body += `<div class="insp-row"><button class="danger" onclick="UI.removeEntityById(${ent.id})">${I18N.t('insp_remove')}</button></div>`;
     el.innerHTML = body;
     const ov = document.getElementById('inspector-overlay'); if (ov) ov.classList.remove('hidden');
+  },
+  // why a crafting building is / isn't producing right now (makes input-gating visible)
+  prodStatus(ent, def, rec) {
+    const s = GameState.state;
+    const missing = Object.keys(rec.inputs).filter(ing => (s.resources[ing] || 0) < rec.inputs[ing]);
+    if (missing.length && !ent._crafting)
+      return { cls: 'warn', text: I18N.t('insp_starved', missing.map(m => this.rn(m)).join(', ')) };
+    const cap = GameState.capFor(ent.recipe);
+    if (isFinite(cap) && (s.resources[ent.recipe] || 0) >= cap - 1e-6)
+      return { cls: 'warn', text: I18N.t('insp_output_full') };
+    if (def.energy > 0 && this.lastPwr && this.lastPwr.ratio < 0.999)
+      return { cls: 'warn', text: I18N.t('insp_lowpower', (this.lastPwr.ratio * 100) | 0) };
+    return { cls: 'ok', text: I18N.t('insp_running') };
   },
   hideInspector() { const ov = document.getElementById('inspector-overlay'); if (ov) ov.classList.add('hidden'); },
 
@@ -520,6 +539,26 @@ export const UI = {
     document.getElementById('hdr-launches').textContent = s.launches;
     document.getElementById('hdr-bonus').textContent = '×' + s.launchBonus.toFixed(1);
 
+    // pollution + prestige badges, and the war-button "under attack" alert
+    const pol = s.pollution || 0;
+    document.getElementById('hdr-pollution').textContent = this.fmt(pol);
+    document.getElementById('hdr-pollution-badge').classList.toggle('danger', pol >= WAR.pollutionTrigger);
+    const presBadge = document.getElementById('hdr-prestige-badge');
+    presBadge.hidden = !(s.prestige > 0);
+    document.getElementById('hdr-prestige').textContent = this.fmt(s.prestige);
+    const warBtn = document.getElementById('war-btn');
+    if (warBtn) warBtn.classList.toggle('under-attack', pol >= WAR.pollutionTrigger && MapView.mode !== 'war');
+
+    // live-refresh the open building's production-status line
+    const statusEl = document.getElementById('insp-status-line');
+    if (statusEl && MapView.selected) {
+      const e = MapView.selected, def = GameState.def(e.type), rec = e.recipe && RECIPES[e.recipe];
+      if (def && rec && def.recipes && def.recipes.length && def.place !== 'ore') {
+        const st = this.prodStatus(e, def, rec);
+        statusEl.textContent = st.text; statusEl.className = 'insp-row insp-status ' + st.cls;
+      }
+    }
+
     const bb = document.getElementById('bonus-body');
     if (bb) {
       const M = GameState.multipliers();
@@ -679,6 +718,28 @@ export const UI = {
     document.getElementById('totals-modal').classList.remove('hidden');
   },
   closeTotals() { document.getElementById('totals-modal').classList.add('hidden'); },
+
+  /* ---------------- game over: the biters ate the factory ---------------- */
+  gameOver(earned) {
+    const s = GameState.state;
+    const quips = I18N.gameoverQuips();
+    document.getElementById('gameover-title').textContent = I18N.t('gameover_title');
+    document.getElementById('gameover-quip').textContent = quips[Math.floor(Math.random() * quips.length)];
+    document.getElementById('gameover-stats').innerHTML =
+        `<div class="go-row">${I18N.t('gameover_produced')}: <b>${this.fmt(GameState.runOutput())}</b></div>`
+      + `<div class="go-row go-earn">${I18N.t('gameover_earned')}: <b>+${this.fmt(earned)} ★</b></div>`
+      + `<div class="go-row">${I18N.t('gameover_total')}: <b>${this.fmt(s.prestige)} ★</b> (×${(1 + s.prestige * 0.01).toFixed(2)})</div>`;
+    document.getElementById('gameover-btn').textContent = I18N.t('gameover_btn');
+    document.getElementById('gameover-modal').classList.remove('hidden');
+  },
+  restartAfterLoss() {
+    document.getElementById('gameover-modal').classList.add('hidden');
+    this.stop(); Save.wipe(); GameState.fresh();
+    if (window.Biters) Biters.list = [];
+    MapView.gotoFactory && MapView.gotoFactory();
+    this.start();
+    this.toast(I18N.t('toast_newgame'));
+  },
 
   renderAll() {
     this.renderResources(); this.renderPalette(); this.renderCraft();

@@ -6,7 +6,7 @@ import { RECIPES }   from './data/recipes.js';
 import { BUILDINGS } from './data/buildings.js';
 import { POWER }     from './data/power.js';
 import { MODULES }   from './data/modules.js';
-import { TICK_SEC, BALANCE } from './config.js';
+import { TICK_SEC, BALANCE, WAR } from './config.js';
 import { Research }  from './research.js';
 
 export const Production = {
@@ -87,6 +87,23 @@ export const Production = {
     return { produced, consumed, ratio };
   },
 
+  // accumulate factory POLLUTION: every actively-working machine emits (more if it
+  // draws a lot of power); standing pollution is slowly absorbed, so it settles at a
+  // level proportional to how hard the factory is running. Drives the biter waves.
+  pollute(dt, pwr) {
+    const s = GameState.state;
+    let emit = 0;
+    for (const e of s.entities) {
+      const def = GameState.def(e.type);
+      if (!def || !this.busy(e, def)) continue;            // only working machines pollute
+      emit += WAR.emitBase + WAR.emitPerEnergy * (def.energy || 0);
+    }
+    s.pollutionRate = emit;                                   // for the readout
+    // flat absorption: a small factory (emit < absorbFlat) stays clean; once industry
+    // outpaces nature the surplus accumulates and the war escalates. Capped so it's finite.
+    s.pollution = Math.max(0, Math.min(WAR.pollutionMax, s.pollution + (emit - WAR.absorbFlat) * dt));
+  },
+
   // resolve an entity's effective recipe: extractors (miner/pumpjack/offshore pump)
   // behave as a 1-second, input-free craft of one unit of their raw resource. Returns
   // null for anything that can't or shouldn't run in the production loop.
@@ -125,8 +142,11 @@ export const Production = {
   // ONLY when that bar fills. Power-starved machines advance proportionally slower.
   step(dt, mult) {
     const s = GameState.state;
+    if (s.over) return { net: {}, pwr: this.lastPwr || { produced: 0, consumed: 0, ratio: 1 } };
     const M = GameState.multipliers();
     const pwr = this.power();
+    this.lastPwr = pwr;
+    this.pollute(dt, pwr);
     const net = {};  // per-resource net change this step (for /sec readouts & history)
 
     for (const e of this.ordered()) {

@@ -66,7 +66,31 @@ header .badge{
   padding:7px 10px;border-radius:3px;color:var(--text-dim);
 }
 header .badge b{color:var(--orange);}
+header .badge.danger{border-color:var(--red);color:#ffb4ae;}
+header .badge.danger b{color:var(--red);}
 header .spacer{flex:1;}
+
+/* war button + its "under attack" alert */
+.war-btn{font-family:var(--pixel);font-size:10px;padding:5px 8px;border:1px solid var(--border);
+  border-radius:3px;background:var(--surface);color:var(--text);cursor:pointer;margin-left:8px;vertical-align:middle;}
+.war-btn:hover{border-color:var(--orange);}
+.war-btn.accent{border-color:var(--green);color:var(--green);}
+.war-btn.under-attack{animation:war-alert 0.9s infinite;border-color:var(--red);}
+@keyframes war-alert{0%,100%{background:transparent;color:var(--red);}50%{background:var(--red);color:#1a1a1a;}}
+
+/* game-over modal */
+.modal.modal-gameover{max-width:520px;border-color:var(--red);}
+.modal.modal-gameover h2{color:var(--red);font-size:15px;}
+.gameover-quip{font-style:italic;color:var(--text);margin:0 0 16px;line-height:1.6;}
+.gameover-stats{text-align:left;display:inline-block;margin:0 auto;font-size:13px;}
+.gameover-stats .go-row{margin:4px 0;color:var(--text-dim);}
+.gameover-stats .go-row b{color:var(--text);}
+.gameover-stats .go-earn b{color:var(--green);}
+
+/* building production status line */
+.insp-status{font-size:11px;margin-top:2px;}
+.insp-status.ok{color:var(--green);}
+.insp-status.warn{color:var(--orange);}
 
 main{flex:1;overflow:hidden;display:flex;}
 input[name=lpane],input[name=rpane]{display:none;}

@@ -4,7 +4,7 @@
     {
       "name": "factorio-idle",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8095"],
+      "runtimeArgs": ["tools/serve.py", "8095"],
       "port": 8095
     }
   ]

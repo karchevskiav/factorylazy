@@ -14,6 +14,8 @@
     <h1 data-i18n="title">⚙ FACTORIO IDLE</h1>
     <span class="badge"><span data-i18n="hdr_rockets">ROCKETS</span>&nbsp;<b id="hdr-launches">0</b></span>
     <span class="badge"><span data-i18n="hdr_bonus">BONUS</span>&nbsp;<b id="hdr-bonus">×1.0</b></span>
+    <span class="badge" id="hdr-prestige-badge" hidden title="Prestige (permanent)">★&nbsp;<b id="hdr-prestige">0</b></span>
+    <span class="badge" id="hdr-pollution-badge" title="Pollution → biter waves">☁&nbsp;<b id="hdr-pollution">0</b></span>
     <div class="spacer"></div>
     <span class="badge" id="hdr-power-badge" hidden><span data-i18n="hdr_pwr">PWR</span>&nbsp;<b id="hdr-power">0 / 0 MW</b></span>
     <button id="lang-btn" onclick="UI.cycleLang()">🌐 EN</button>
@@ -135,6 +137,16 @@
     <h2 data-i18n="modal_welcome_h">WELCOME BACK</h2>
     <p id="offline-text"></p>
     <div class="btns"><button class="accent" data-i18n="btn_collect" onclick="UI.closeOffline()">COLLECT</button></div>
+  </div>
+</div>
+
+<!-- game-over modal: the biters broke into the factory -->
+<div class="overlay hidden" id="gameover-modal">
+  <div class="modal modal-gameover">
+    <h2 id="gameover-title">☠ THE BITERS WIN AGAIN</h2>
+    <p id="gameover-quip" class="gameover-quip"></p>
+    <div id="gameover-stats" class="gameover-stats"></div>
+    <div class="btns"><button class="accent" id="gameover-btn" onclick="UI.restartAfterLoss()">REBUILD</button></div>
   </div>
 </div>
 

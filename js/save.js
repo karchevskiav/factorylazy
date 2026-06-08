@@ -11,6 +11,8 @@ export const Save = {
     s.lastTick = Date.now();
     s.lastSave = Date.now();
     const { stats, ...persist } = s;     // graph buffers are session-only, never persisted
+    // strip transient combat fields (turret target ref) so they don't bloat the save
+    persist.entities = s.entities.map(({ _aim, _crafting, _progress, ...keep }) => keep);
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(persist)); } catch (e) { /* quota / private mode */ }
   },
 
@@ -35,6 +37,8 @@ export const Save = {
     s.entities = (loaded.entities || []).map(e => ({
       id: e.id, type: e.type, x: e.x, y: e.y,
       recipe: e.recipe, modules: e.modules || [], _progress: 0,
+      ...(e.hp != null ? { hp: e.hp } : {}),       // keep structure damage
+      ...(e.ammo != null ? { ammo: e.ammo } : {}), // keep turret ammo
     }));
     GameState.nextId = (s.entities.reduce((m, e) => Math.max(m, e.id || 0), 0) || 0) + 1;
     s.cleared         = loaded.cleared || {};      // obstacles the player already removed
@@ -46,6 +50,8 @@ export const Save = {
     s.rocketUnlocked  = !!loaded.rocketUnlocked;
     s.totals          = loaded.totals || { produced: {}, consumed: {} };
     if (loaded.upgrades) Object.assign(s.upgrades, loaded.upgrades);   // manual-craft ranks
+    s.pollution       = loaded.pollution || 0;     // standing pollution drives the waves
+    s.over            = false;                     // a resumed run is never already-lost
     s.lastTick        = loaded.lastTick || Date.now();
     GameState.state = s;
     return s;
@@ -61,8 +67,10 @@ export const Save = {
     const before = {};
     for (const k in RESOURCES) before[k] = s.resources[k] || 0;
 
+    const pollutionBefore = s.pollution || 0;     // offline grants resources, not a war spike
     const chunk = 5; // coarse 5-second steps
     for (let t = 0; t < dt; t += chunk) Production.step(Math.min(chunk, dt - t), OFFLINE_RATE);
+    s.pollution = pollutionBefore;
 
     const gains = {};
     for (const k in RESOURCES) {

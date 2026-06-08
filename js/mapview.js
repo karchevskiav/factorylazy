@@ -52,8 +52,10 @@ export const MapView = {
       const dt = Math.min(0.1, (ts - this.critterTs) / 1000);
       this.critterTs = ts;
       const visible = this.canvas && this.canvas.offsetParent !== null;
+      // the war is SIMULATED in the main tick (UI.tick) so it runs tab-independently; here
+      // we only animate the biters' legs and redraw smoothly between ticks.
       if (visible && GameState.state && GameState.state.map && !this.mining) {
-        Biters.update(dt);
+        Biters.animate(dt);
         this.render();
       }
       this.critterRAF = requestAnimationFrame(loop);
@@ -530,6 +532,20 @@ export const MapView = {
       }
       // progress bar
       if (e._progress) { ctx.fillStyle = '#ffcf3f'; ctx.fillRect(sx + 2, sy + h - 4, (w - 4) * e._progress, 3); }
+      // structure damage bar (walls/turrets taking biter hits)
+      const mhp = GameState.maxHp(e.type);
+      if (mhp && e.hp != null && e.hp < mhp) {
+        const f = Math.max(0, e.hp / mhp);
+        ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(sx + 1, sy - 5, w - 2, 4);
+        ctx.fillStyle = f > 0.5 ? '#5fe06a' : f > 0.25 ? '#e0c14a' : '#e0524a';
+        ctx.fillRect(sx + 1, sy - 5, (w - 2) * f, 4);
+      }
+      // gun-turret ammo pip (low/empty warning)
+      if (e.type === 'gunTurret') {
+        const af = Math.max(0, Math.min(1, (e.ammo || 0) / 20));
+        ctx.fillStyle = af <= 0 ? '#e0524a' : af < 0.25 ? '#e0c14a' : '#7fd6ff';
+        ctx.fillRect(sx + 1, sy + h - 3, (w - 2) * af, 3);
+      }
       if (this.selected === e) { ctx.strokeStyle = '#7fd6ff'; ctx.lineWidth = 2; ctx.strokeRect(sx + 1, sy + 1, w - 2, h - 2); ctx.lineWidth = 1; }
     }
 
@@ -596,19 +612,32 @@ export const MapView = {
   drawBiters() {
     const ctx = this.ctx, H = this.canvas.height;
     const scale = this.BITER_SCALE;
+    // turret tracers: a brief muzzle line from each firing turret to its target
+    for (const e of GameState.state.entities) {
+      if (e.type !== 'gunTurret' || !e._aim || e._aim.gone) continue;
+      const cx = (e.x + 1) * TILE, cy = (e.y + 1) * TILE - this.camPy;
+      const tx = e._aim.x * TILE, ty = e._aim.y * TILE - this.camPy;
+      ctx.strokeStyle = 'rgba(255,228,120,0.9)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(tx, ty); ctx.stroke(); ctx.lineWidth = 1;
+      ctx.fillStyle = '#ffe478';
+      ctx.beginPath(); ctx.arc(tx, ty, 2.5, 0, Math.PI * 2); ctx.fill();
+    }
     for (const b of Biters.list) {
       const anim = ENEMIES.biter[b.state]; if (!anim) continue;
       const im = this.imgs[anim.img]; if (!im || !im.complete || !im.naturalWidth) continue;
-      const bw = scale * TILE, bh = bw * (anim.ch / anim.cw);
+      const fade = b.gone ? Math.max(0, (b.dying || 0) / 0.3) : 1;   // death fade-out
+      const bw = scale * TILE * (b.gone ? 0.6 + 0.4 * fade : 1), bh = bw * (anim.ch / anim.cw);
       const px = b.x * TILE - bw / 2, py = b.y * TILE - this.camPy - bh / 2;
       if (py + bh < 0 || py > H) continue;
       const fr = Math.floor(b.frame) % anim.frames;
       // soft contact shadow
-      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.fillStyle = `rgba(0,0,0,${0.22 * fade})`;
       ctx.beginPath();
       ctx.ellipse(px + bw / 2, py + bh * 0.74, bw * 0.30, bh * 0.15, 0, 0, Math.PI * 2);
       ctx.fill();
+      ctx.globalAlpha = fade;
       ctx.drawImage(im, fr * anim.cw, b.dir * anim.ch, anim.cw, anim.ch, px, py, bw, bh);
+      ctx.globalAlpha = 1;
     }
   },
 

@@ -7,7 +7,9 @@ import { TECH }      from './data/tech.js';
 import { MODULES }   from './data/modules.js';
 import { UPGRADES, STORAGE_BASE, FLUID_BASE, FLUIDS } from './data/upgrades.js';
 import { MapGen }    from './map.js';
-import { STAT_WINDOWS, BALANCE } from './config.js';
+import { STAT_WINDOWS, BALANCE, WAR } from './config.js';
+
+const PRESTIGE_KEY = 'factorio_idle_prestige';   // persists across runs (survives a wipe)
 
 export const GameState = {
   state: null,
@@ -19,6 +21,9 @@ export const GameState = {
       version: 4,
       launches: 0,
       launchBonus: 1,
+      prestige: this.loadPrestige(),   // accumulated across runs → permanent global bonus
+      pollution: 0,                    // factory emissions hanging over the front
+      over: false,                     // set true when biters reach the factory (run lost)
       resources: {},
       map: MapGen.generate(Date.now()),
       entities: [],    // [{id, type, x, y, recipe, modules:[]}] — buildings placed on the map
@@ -60,7 +65,42 @@ export const GameState = {
     for (let x = 0; x < s.map.width; x++)
       s.entities.push({ id: this.nextId++, type: 'stoneWall', x, y: wallY, recipe: null, modules: [] });
     const tx = Math.floor(s.map.width / 2) - 1;
-    s.entities.push({ id: this.nextId++, type: 'gunTurret', x: tx, y: wallY + 1, recipe: null, modules: [], ammo: 20 });
+    s.entities.push({ id: this.nextId++, type: 'gunTurret', x: tx, y: wallY + 1, recipe: null, modules: [], ammo: WAR.turretAmmoMax });
+  },
+
+  // ---------------- prestige (persists across runs) & the war's game-over ----------
+  loadPrestige() { try { return +localStorage.getItem(PRESTIGE_KEY) || 0; } catch (e) { return 0; } },
+  savePrestige(v) { try { localStorage.setItem(PRESTIGE_KEY, String(v)); } catch (e) {} },
+  prestigeMult() { return 1 + (this.state ? this.state.prestige : this.loadPrestige()) * WAR.prestigeBonus; },
+
+  // total items the factory produced this run → prestige points earned on a loss
+  runOutput() {
+    let sum = 0; const p = this.state.totals.produced;
+    for (const k in p) sum += p[k];
+    return sum;
+  },
+  prestigeEarned() { return Math.floor(Math.sqrt(Math.max(0, this.runOutput())) * WAR.prestigePerRun); },
+
+  // the biters broke into the factory: end the run, bank prestige, freeze the sim.
+  endRun() {
+    if (this.state.over) return 0;
+    this.state.over = true;
+    const earned = this.prestigeEarned();
+    this.state.prestige += earned;
+    this.savePrestige(this.state.prestige);
+    return earned;
+  },
+
+  // max HP of a destructible structure (walls/turrets); 0 = not a war target
+  maxHp(type) {
+    if (type === 'stoneWall') return WAR.wallHp;
+    if (type === 'gunTurret') return WAR.turretHp;
+    return 0;
+  },
+  isMilitary(type) { const d = BUILDINGS[type]; return !!(d && d.military); },
+  removeEntity(ent) {
+    const a = this.state.entities, i = a.indexOf(ent);
+    if (i >= 0) a.splice(i, 1);
   },
 
   def(type)  { return BUILDINGS[type] || POWER[type]; },        // unified building/generator lookup
@@ -187,7 +227,7 @@ export const GameState = {
     }
     speed += this.craftMult() - 1;     // manipulators + speed modules
     yld   += this.flowMult()  - 1;     // conveyors + productivity modules
-    return { speed, yield: yld * this.state.launchBonus };
+    return { speed, yield: yld * this.state.launchBonus * this.prestigeMult() };
   },
 
   // number of same-type entities whose footprint shares an edge with `ent` (nuclear neighbors)
